@@ -14,12 +14,14 @@ import (
 // WeatherData represents the weather information from a single source.
 // Temperature is in Celsius, Humidity is a percentage (0-100).
 // Error field contains any error that occurred during fetching.
+// Duration measures the time taken to fetch from this source.
 type WeatherData struct {
 	Source      string
 	Temperature float64
 	Humidity    float64
 	Condition   string
 	Error       error
+	Duration    time.Duration
 }
 
 // WeatherSource is the interface that all weather API implementations must satisfy.
@@ -52,28 +54,31 @@ var client = &http.Client{
 }
 
 // doGet creates a request with context, sets a simple UA, checks non-200 early, and returns the response.
-func doGet(ctx context.Context, url string) (*http.Response, error) {
+// Returns the response and duration of the entire request.
+func doGet(ctx context.Context, url string) (*http.Response, time.Duration, error) {
+	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, time.Since(start), fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("User-Agent", "weather-aggregator/1.0")
 
 	resp, err := client.Do(req)
+	duration := time.Since(start)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, duration, fmt.Errorf("request failed: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return nil, duration, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
-	return resp, nil
+	return resp, duration, nil
 }
 
 // lookupLatLon resolves a city name to coordinates using Open-Meteo geocoding.
 func lookupLatLon(ctx context.Context, city string) (float64, float64, error) {
 	geoURL := fmt.Sprintf("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1", url.QueryEscape(city))
-	resp, err := doGet(ctx, geoURL)
+	resp, _, err := doGet(ctx, geoURL)
 	if err != nil {
 		return 0, 0, fmt.Errorf("geocoding: %w", err)
 	}
@@ -105,18 +110,21 @@ type OpenMeteoSource struct{}
 
 func (o *OpenMeteoSource) Name() string { return "Open-Meteo" }
 func (o *OpenMeteoSource) Fetch(ctx context.Context, city string) WeatherData {
+	start := time.Now()
 	res := WeatherData{Source: o.Name()}
 
 	lat, lon, err := lookupLatLon(ctx, city)
 	if err != nil {
 		res.Error = err
+		res.Duration = time.Since(start)
 		return res
 	}
 
 	weatherURL := fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,relative_humidity_2m,weather_code", lat, lon)
-	resp, err := doGet(ctx, weatherURL)
+	resp, _, err := doGet(ctx, weatherURL)
 	if err != nil {
 		res.Error = fmt.Errorf("weather: %w", err)
+		res.Duration = time.Since(start)
 		return res
 	}
 	defer resp.Body.Close()
@@ -130,9 +138,11 @@ func (o *OpenMeteoSource) Fetch(ctx context.Context, city string) WeatherData {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		res.Error = fmt.Errorf("decode weather: %w", err)
+		res.Duration = time.Since(start)
 		return res
 	}
 	res.Temperature, res.Humidity, res.Condition = data.Current.Temp, data.Current.Hum, mapWMOCode(data.Current.Code)
+	res.Duration = time.Since(start)
 	return res
 }
 
@@ -161,10 +171,12 @@ type WttrinSource struct{}
 
 func (w *WttrinSource) Name() string { return "wttr.in" }
 func (w *WttrinSource) Fetch(ctx context.Context, city string) WeatherData {
+	start := time.Now()
 	res := WeatherData{Source: w.Name()}
-	resp, err := doGet(ctx, "https://wttr.in/"+url.QueryEscape(city)+"?format=j1")
+	resp, _, err := doGet(ctx, "https://wttr.in/"+url.QueryEscape(city)+"?format=j1")
 	if err != nil {
 		res.Error = err
+		res.Duration = time.Since(start)
 		return res
 	}
 	defer resp.Body.Close()
@@ -202,6 +214,7 @@ func (w *WttrinSource) Fetch(ctx context.Context, city string) WeatherData {
 	if len(data.Current[0].Desc) > 0 {
 		res.Condition = data.Current[0].Desc[0].Val
 	}
+	res.Duration = time.Since(start)
 	return res
 }
 
@@ -211,14 +224,17 @@ type WeatherAPISource struct{ key string }
 
 func (w *WeatherAPISource) Name() string { return "WeatherAPI.com" }
 func (w *WeatherAPISource) Fetch(ctx context.Context, city string) WeatherData {
+	start := time.Now()
 	res := WeatherData{Source: w.Name()}
 	if w.key == "" {
 		res.Error = fmt.Errorf("API key required")
+		res.Duration = time.Since(start)
 		return res
 	}
-	resp, err := doGet(ctx, fmt.Sprintf("https://api.weatherapi.com/v1/current.json?key=%s&q=%s", w.key, url.QueryEscape(city)))
+	resp, _, err := doGet(ctx, fmt.Sprintf("https://api.weatherapi.com/v1/current.json?key=%s&q=%s", w.key, url.QueryEscape(city)))
 	if err != nil {
 		res.Error = err
+		res.Duration = time.Since(start)
 		return res
 	}
 	defer resp.Body.Close()
@@ -233,9 +249,11 @@ func (w *WeatherAPISource) Fetch(ctx context.Context, city string) WeatherData {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		res.Error = err
+		res.Duration = time.Since(start)
 		return res
 	}
 	res.Temperature, res.Humidity, res.Condition = data.Current.TempC, data.Current.Hum, data.Current.Cond.Text
+	res.Duration = time.Since(start)
 	return res
 }
 
@@ -245,14 +263,17 @@ type WeatherstackSource struct{ key string }
 
 func (w *WeatherstackSource) Name() string { return "Weatherstack" }
 func (w *WeatherstackSource) Fetch(ctx context.Context, city string) WeatherData {
+	start := time.Now()
 	res := WeatherData{Source: w.Name()}
 	if w.key == "" {
 		res.Error = fmt.Errorf("API key required")
+		res.Duration = time.Since(start)
 		return res
 	}
-	resp, err := doGet(ctx, fmt.Sprintf("http://api.weatherstack.com/current?access_key=%s&query=%s", w.key, url.QueryEscape(city)))
+	resp, _, err := doGet(ctx, fmt.Sprintf("http://api.weatherstack.com/current?access_key=%s&query=%s", w.key, url.QueryEscape(city)))
 	if err != nil {
 		res.Error = err
+		res.Duration = time.Since(start)
 		return res
 	}
 	defer resp.Body.Close()
@@ -265,12 +286,14 @@ func (w *WeatherstackSource) Fetch(ctx context.Context, city string) WeatherData
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		res.Error = err
+		res.Duration = time.Since(start)
 		return res
 	}
 	res.Temperature, res.Humidity = data.Current.Temp, float64(data.Current.Hum)
 	if len(data.Current.Desc) > 0 {
 		res.Condition = data.Current.Desc[0]
 	}
+	res.Duration = time.Since(start)
 	return res
 }
 
@@ -280,14 +303,17 @@ type MeteosourceSource struct{ key string }
 
 func (m *MeteosourceSource) Name() string { return "Meteosource" }
 func (m *MeteosourceSource) Fetch(ctx context.Context, city string) WeatherData {
+	start := time.Now()
 	res := WeatherData{Source: m.Name()}
 	if m.key == "" {
 		res.Error = fmt.Errorf("API key required")
+		res.Duration = time.Since(start)
 		return res
 	}
-	resp, err := doGet(ctx, fmt.Sprintf("https://www.meteosource.com/api/v1/free/point?place_id=%s&sections=current&language=en&units=metric&key=%s", url.QueryEscape(city), m.key))
+	resp, _, err := doGet(ctx, fmt.Sprintf("https://www.meteosource.com/api/v1/free/point?place_id=%s&sections=current&language=en&units=metric&key=%s", url.QueryEscape(city), m.key))
 	if err != nil {
 		res.Error = err
+		res.Duration = time.Since(start)
 		return res
 	}
 	defer resp.Body.Close()
@@ -308,6 +334,7 @@ func (m *MeteosourceSource) Fetch(ctx context.Context, city string) WeatherData 
 	} else if s, ok := data.Current.Hum.(string); ok {
 		fmt.Sscanf(strings.TrimSuffix(s, "%"), "%f", &res.Humidity)
 	}
+	res.Duration = time.Since(start)
 	return res
 }
 
@@ -318,19 +345,23 @@ type PirateWeatherSource struct{ key string }
 func (p *PirateWeatherSource) Name() string { return "Pirate Weather" }
 
 func (p *PirateWeatherSource) Fetch(ctx context.Context, city string) WeatherData {
+	start := time.Now()
 	res := WeatherData{Source: p.Name()}
 	if p.key == "" {
 		res.Error = fmt.Errorf("API key required")
+		res.Duration = time.Since(start)
 		return res
 	}
 	lat, lon, err := lookupLatLon(ctx, city)
 	if err != nil {
 		res.Error = err
+		res.Duration = time.Since(start)
 		return res
 	}
-	resp, err := doGet(ctx, fmt.Sprintf("https://api.pirateweather.net/forecast/%s/%.4f,%.4f?units=si", p.key, lat, lon))
+	resp, _, err := doGet(ctx, fmt.Sprintf("https://api.pirateweather.net/forecast/%s/%.4f,%.4f?units=si", p.key, lat, lon))
 	if err != nil {
 		res.Error = fmt.Errorf("weather: %w", err)
+		res.Duration = time.Since(start)
 		return res
 	}
 	defer resp.Body.Close()
@@ -343,9 +374,11 @@ func (p *PirateWeatherSource) Fetch(ctx context.Context, city string) WeatherDat
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		res.Error = fmt.Errorf("decode weather: %w", err)
+		res.Duration = time.Since(start)
 		return res
 	}
 	res.Temperature, res.Humidity, res.Condition = data.Currently.Temp, data.Currently.Hum*100, data.Currently.Sum
+	res.Duration = time.Since(start)
 	return res
 }
 

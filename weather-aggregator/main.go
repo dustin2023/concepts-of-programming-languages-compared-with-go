@@ -18,14 +18,16 @@ func main() {
 	// Define and parse command-line flags
 	city := flag.String("city", "", "City name (required)")
 	seq := flag.Bool("sequential", false, "Use sequential fetching for performance comparison")
+	exclude := flag.String("exclude", "", "Comma-separated source names to exclude (e.g., 'wttr.in,WeatherAPI.com')")
 	flag.Parse()
 
 	// Validate city input - must not be empty or whitespace-only
 	if *city == "" || strings.TrimSpace(*city) == "" {
 		fmt.Fprintln(os.Stderr, "Error: City name is required and cannot be empty")
-		fmt.Println("\nUsage: weather-aggregator --city=<city> [--sequential]")
+		fmt.Println("\nUsage: weather-aggregator --city=<city> [--sequential] [--exclude=source1,source2]")
 		fmt.Println("  --city       City name (required)")
 		fmt.Println("  --sequential Use sequential fetching instead of concurrent (optional)")
+		fmt.Println("  --exclude    Comma-separated source names to skip (optional)")
 		fmt.Println("\nAPI keys are loaded from .env file.")
 		fmt.Println("Free sources: Open-Meteo, wttr.in")
 		os.Exit(1)
@@ -35,7 +37,28 @@ func main() {
 	cityName := strings.TrimSpace(*city)
 
 	// Initialize all available weather sources
-	sources := initSources()
+	allSources := initSources()
+
+	// Filter out excluded sources
+	excludedMap := make(map[string]bool)
+	if *exclude != "" {
+		for _, name := range strings.Split(*exclude, ",") {
+			excludedMap[strings.TrimSpace(name)] = true
+		}
+	}
+
+	sources := make([]WeatherSource, 0, len(allSources))
+	for _, s := range allSources {
+		if !excludedMap[s.Name()] {
+			sources = append(sources, s)
+		}
+	}
+
+	if len(sources) == 0 {
+		fmt.Fprintln(os.Stderr, "Error: All sources were excluded")
+		os.Exit(1)
+	}
+
 	fmt.Printf("🌍 %s | Fetching from %d sources...\n", cityName, len(sources))
 
 	// Overall timeout for the whole run to avoid hanging
@@ -94,14 +117,14 @@ func fetchSequential(ctx context.Context, city string, sources []WeatherSource) 
 }
 
 // displayResults prints individual weather data from all sources and aggregated summary.
-// Shows per-source results with emoji indicators (✅/❌) and aggregated statistics.
+// Shows per-source results with emoji indicators (✅/❌), duration, and aggregated statistics.
 // Aggregation is calculated from all valid responses only.
 func displayResults(data []WeatherData) {
 	for _, d := range data {
 		if d.Error != nil {
-			fmt.Printf("❌ %-18s ERROR: %v\n", d.Source+":", d.Error)
+			fmt.Printf("❌ %-18s ERROR: %v [%v]\n", d.Source+":", d.Error, d.Duration)
 		} else {
-			fmt.Printf("✅ %-18s %.1f°C, %.0f%% humidity, %s\n", d.Source+":", d.Temperature, d.Humidity, d.Condition)
+			fmt.Printf("✅ %-18s %.1f°C, %.0f%% humidity, %s [%v]\n", d.Source+":", d.Temperature, d.Humidity, d.Condition, d.Duration)
 		}
 	}
 
