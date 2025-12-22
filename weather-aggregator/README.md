@@ -16,9 +16,7 @@ Minimal CLI-based weather aggregator demonstrating **Go's parallel programming**
 | **Open-Meteo** | ✅ Yes | ✅ Excellent | Geocoding + weather |
 | **wttr.in** | ✅ Yes | ✅ Excellent | JSON format |
 | **WeatherAPI.com** | 🔑 Key | ✅ Good | 1M calls/month free |
-| **OpenWeatherMap** | 🔑 Key | ✅ Good | 1k calls/day free |
 | **Weatherstack** | 🔑 Key | ✅ Good | 1k calls/month free |
-| **Visual Crossing** | 🔑 Key | ✅ Good | 1k calls/day free |
 | **Meteosource** | 🔑 Key | ✅ Good | High precision |
 | **Pirate Weather** | 🔑 Key | ✅ Good | Dark Sky compatible |
 
@@ -52,9 +50,7 @@ echo "WEATHERSTACK_API_KEY=your_key" >> .env
 
 **Environment Variables (.env):**
 - `WEATHER_API_COM_KEY`
-- `OPENWEATHER_API_KEY`
 - `WEATHERSTACK_API_KEY`
-- `VISUALCROSSING_API_KEY`
 - `METEOSOURCE_API_KEY`
 - `PIRATE_WEATHER_API_KEY`
 
@@ -132,9 +128,7 @@ go test -cover
 ## 🔑 Getting API Keys (Optional)
 
 1. **WeatherAPI.com**: https://www.weatherapi.com/signup.aspx (1M/month free)
-2. **OpenWeatherMap**: https://openweathermap.org/api (1k/day free)
-3. **Weatherstack**: https://weatherstack.com/signup (1k/month free)
-4. **Visual Crossing**: https://www.visualcrossing.com/weather-api (1k/day free)
+2. **Weatherstack**: https://weatherstack.com/signup (1k/month free)
 
 ## 📈 Performance
 
