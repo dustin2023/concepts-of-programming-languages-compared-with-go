@@ -13,9 +13,10 @@ Semester Project: Parallel Programming - Go & Python
 import argparse
 import asyncio
 import os
+import re
 import sys
 import time
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
 
@@ -32,6 +33,23 @@ from weather import (
     aggregate_weather,
     get_condition_emoji,
 )
+
+
+def validate_city_name(city: str) -> Optional[str]:
+    """Validate and sanitize city name input."""
+    city = city.strip()
+    
+    if not city:
+        return None
+    
+    if len(city) > 100:  # Reasonable limit
+        return None
+    
+    # Allow letters, spaces, hyphens, apostrophes, periods (St. Petersburg, New York, etc.)
+    if not re.match(r"^[a-zA-Z\s\-'\.]+$", city):
+        return None
+    
+    return city
 
 
 def init_sources() -> list:
@@ -67,12 +85,13 @@ def display_results(data: List[WeatherData]) -> None:
 
     # Individual results
     for d in data:
+        duration_str = f" ({d.duration_ms:.0f}ms)" if d.duration_ms else ""
         if d.error:
-            print(f"❌ {d.source + ':':<18} ERROR: {d.error}")
+            print(f"❌ {d.source + ':':<18} ERROR: {d.error}{duration_str}")
         else:
             hum_str = f"{d.humidity:.0f}%" if d.humidity is not None else "N/A"
             print(
-                f"✅ {d.source + ':':<18} {d.temperature:.1f}°C, {hum_str} humidity, {d.condition}"
+                f"✅ {d.source + ':':<18} {d.temperature:.1f}°C, {hum_str} humidity, {d.condition}{duration_str}"
             )
 
     # Aggregated results
@@ -83,7 +102,13 @@ def display_results(data: List[WeatherData]) -> None:
 
     if agg["valid_count"] > 0:
         print(f"→ Avg Temperature: {agg['avg_temp']:.2f}°C")
-        print(f"→ Avg Humidity:    {agg['avg_hum']:.1f}%")
+        
+        # Show humidity count for transparency
+        if agg['hum_count'] > 0:
+            print(f"→ Avg Humidity:    {agg['avg_hum']:.1f}% ({agg['hum_count']}/{agg['valid_count']} sources)")
+        else:
+            print(f"→ Avg Humidity:    N/A (no sources)")
+        
         print(f"→ Consensus:       {agg['condition']} {emoji}")
     else:
         print("→ No valid data available")
@@ -114,9 +139,9 @@ async def main() -> int:
     args = parser.parse_args()
 
     # Validate city input
-    city = args.city.strip()
+    city = validate_city_name(args.city)
     if not city:
-        print("Error: City name is required and cannot be empty", file=sys.stderr)
+        print("Error: Invalid city name. Use only letters, spaces, hyphens, and periods.", file=sys.stderr)
         return 1
 
     # Initialize sources

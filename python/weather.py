@@ -9,7 +9,7 @@ Semester Project: Parallel Programming - Go & Python
 import asyncio
 import aiohttp
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Protocol
 from urllib.parse import quote
 
 # =============================================================================
@@ -31,13 +31,51 @@ class WeatherData:
     humidity: Optional[float] = None
     condition: str = ""
     error: Optional[str] = None
+    duration_ms: Optional[float] = None  # Request duration in milliseconds
+
+
+class WeatherSource(Protocol):
+    """Protocol for weather source implementations."""
+    name: str
+    
+    async def fetch(self, city: str, session: aiohttp.ClientSession, 
+                   coords_cache: Optional[Dict[str, Tuple[float, float]]] = None) -> WeatherData:
+        ...
+
+
+class TimedWeatherSource:
+    """Wrapper to add timing to weather source fetches."""
+    
+    def __init__(self, source: WeatherSource):
+        self.source = source
+        self.name = source.name
+    
+    async def fetch(self, city: str, session: aiohttp.ClientSession,
+                   coords_cache: Optional[Dict[str, Tuple[float, float]]] = None) -> WeatherData:
+        """Fetch weather data and track duration."""
+        import time
+        start = time.perf_counter()
+        result = await self.source.fetch(city, session, coords_cache)
+        duration = (time.perf_counter() - start) * 1000  # Convert to ms
+        result.duration_ms = duration
+        return result
 
 
 # =============================================================================
 # HTTP Helper Functions
 # =============================================================================
 
-async def http_get_json(url: str) -> Tuple[Optional[dict], Optional[str]]:
+def safe_float(value, default: float = 0.0) -> float:
+    """Safely convert value to float, return default if invalid."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+async def http_get_json(url: str, session: aiohttp.ClientSession) -> Tuple[Optional[dict], Optional[str]]:
     """
     Perform HTTP GET and return JSON response.
     
@@ -45,18 +83,21 @@ async def http_get_json(url: str) -> Tuple[Optional[dict], Optional[str]]:
         (data, None) on success, (None, error_message) on failure
     """
     try:
-        async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    return None, f"status {resp.status}"
-                return await resp.json(), None
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return None, f"HTTP {resp.status}"
+            return await resp.json(), None
     except asyncio.TimeoutError:
         return None, "timeout"
+    except aiohttp.ClientError as e:
+        return None, f"network error: {e.__class__.__name__}"
+    except ValueError:
+        return None, "invalid JSON"
     except Exception as e:
-        return None, str(e)
+        return None, f"unexpected: {e.__class__.__name__}"
 
 
-async def geocode_city(city: str) -> Tuple[Optional[Tuple[float, float]], Optional[str]]:
+async def geocode_city(city: str, session: aiohttp.ClientSession) -> Tuple[Optional[Tuple[float, float]], Optional[str]]:
     """
     Resolve city name to (lat, lon) coordinates using Open-Meteo geocoding.
     
@@ -64,10 +105,10 @@ async def geocode_city(city: str) -> Tuple[Optional[Tuple[float, float]], Option
         ((lat, lon), None) on success, (None, error_message) on failure
     """
     url = f"https://geocoding-api.open-meteo.com/v1/search?name={quote(city)}&count=1"
-    data, err = await http_get_json(url)
+    data, err = await http_get_json(url, session)
     
     if err:
-        return None, f"geo: {err}"
+        return None, err
     if not data or not data.get('results'):
         return None, "city not found"
     
@@ -75,20 +116,42 @@ async def geocode_city(city: str) -> Tuple[Optional[Tuple[float, float]], Option
     return (result['latitude'], result['longitude']), None
 
 
+async def get_coordinates(city: str, session: aiohttp.ClientSession,
+                         coords_cache: Optional[Dict[str, Tuple[float, float]]] = None
+                         ) -> Tuple[Optional[Tuple[float, float]], Optional[str]]:
+    """Get coordinates from cache or geocode."""
+    if coords_cache and city in coords_cache:
+        return coords_cache[city], None
+    return await geocode_city(city, session)
+
+
 # =============================================================================
 # Weather Sources - Individual API Implementations
 # =============================================================================
+
+class BaseAPISource:
+    """Base class for API sources requiring authentication."""
+    
+    def __init__(self, api_key: str):
+        self._api_key = api_key
+    
+    def _validate_api_key(self, result: WeatherData) -> bool:
+        """Return False and set error if API key is missing."""
+        if not self._api_key:
+            result.error = "API key required"
+            return False
+        return True
 
 class OpenMeteoSource:
     """Open-Meteo API - Free, no API key required."""
     
     name = "Open-Meteo"
     
-    async def fetch(self, city: str) -> WeatherData:
+    async def fetch(self, city: str, session: aiohttp.ClientSession,
+                   coords_cache: Optional[Dict[str, Tuple[float, float]]] = None) -> WeatherData:
         result = WeatherData(source=self.name)
         
-        # Geocoding
-        coords, err = await geocode_city(city)
+        coords, err = await get_coordinates(city, session, coords_cache)
         if err:
             result.error = err
             return result
@@ -100,14 +163,14 @@ class OpenMeteoSource:
             f"current=temperature_2m,relative_humidity_2m,weather_code"
         )
         
-        data, err = await http_get_json(url)
+        data, err = await http_get_json(url, session)
         if err:
             result.error = err
             return result
         
         current = data.get('current', {})
-        result.temperature = current.get('temperature_2m', 0.0)
-        result.humidity = current.get('relative_humidity_2m', 0.0)
+        result.temperature = safe_float(current.get('temperature_2m'))
+        result.humidity = safe_float(current.get('relative_humidity_2m'))
         result.condition = _map_wmo_code(current.get('weather_code', 0))
         return result
 
@@ -117,83 +180,85 @@ class WttrinSource:
     
     name = "wttr.in"
     
-    async def fetch(self, city: str) -> WeatherData:
+    async def fetch(self, city: str, session: aiohttp.ClientSession,
+                   coords_cache: Optional[Dict[str, Tuple[float, float]]] = None) -> WeatherData:
         result = WeatherData(source=self.name)
         
-        data, err = await http_get_json(f"https://wttr.in/{quote(city)}?format=j1")
+        data, err = await http_get_json(f"https://wttr.in/{quote(city)}?format=j1", session)
         if err:
             result.error = err
             return result
         
-        conditions = data.get('current_condition', [])
-        if not conditions:
-            result.error = "no data"
-            return result
-        
-        current = conditions[0]
-        result.temperature = float(current.get('temp_C', 0))
-        result.humidity = float(current.get('humidity', 0))
-        
-        desc = current.get('weatherDesc', [])
-        if desc:
-            result.condition = desc[0].get('value', '')
+        try:
+            conditions = data.get('current_condition', [])
+            if not conditions or not isinstance(conditions, list):
+                result.error = "invalid response format"
+                return result
+            
+            current = conditions[0]
+            if not current or not isinstance(current, dict):
+                result.error = "invalid response format"
+                return result
+            
+            result.temperature = safe_float(current.get('temp_C'))
+            result.humidity = safe_float(current.get('humidity'))
+            
+            desc = current.get('weatherDesc', [])
+            if desc and isinstance(desc, list) and desc[0]:
+                result.condition = desc[0].get('value', '')
+        except (KeyError, IndexError, TypeError) as e:
+            result.error = f"parse error: {e.__class__.__name__}"
         
         return result
 
 
-class WeatherAPISource:
+class WeatherAPISource(BaseAPISource):
     """WeatherAPI.com - Requires API key."""
     
     name = "WeatherAPI.com"
     
-    def __init__(self, api_key: str):
-        self._api_key = api_key
-    
-    async def fetch(self, city: str) -> WeatherData:
+    async def fetch(self, city: str, session: aiohttp.ClientSession,
+                   coords_cache: Optional[Dict[str, Tuple[float, float]]] = None) -> WeatherData:
         result = WeatherData(source=self.name)
         
-        if not self._api_key:
-            result.error = "API key required"
+        if not self._validate_api_key(result):
             return result
         
         url = f"https://api.weatherapi.com/v1/current.json?key={self._api_key}&q={quote(city)}"
-        data, err = await http_get_json(url)
+        data, err = await http_get_json(url, session)
         if err:
             result.error = err
             return result
         
         current = data.get('current', {})
-        result.temperature = current.get('temp_c', 0.0)
-        result.humidity = float(current.get('humidity', 0))
+        result.temperature = safe_float(current.get('temp_c'))
+        result.humidity = safe_float(current.get('humidity'))
         result.condition = current.get('condition', {}).get('text', '')
         return result
 
 
-class WeatherstackSource:
+class WeatherstackSource(BaseAPISource):
     """Weatherstack API - Requires API key. Free tier uses HTTP only."""
     
     name = "Weatherstack"
     
-    def __init__(self, api_key: str):
-        self._api_key = api_key
-    
-    async def fetch(self, city: str) -> WeatherData:
+    async def fetch(self, city: str, session: aiohttp.ClientSession,
+                   coords_cache: Optional[Dict[str, Tuple[float, float]]] = None) -> WeatherData:
         result = WeatherData(source=self.name)
         
-        if not self._api_key:
-            result.error = "API key required"
+        if not self._validate_api_key(result):
             return result
         
         # Free tier requires HTTP, not HTTPS
         url = f"http://api.weatherstack.com/current?access_key={self._api_key}&query={quote(city)}"
-        data, err = await http_get_json(url)
+        data, err = await http_get_json(url, session)
         if err:
             result.error = err
             return result
         
         current = data.get('current', {})
-        result.temperature = float(current.get('temperature', 0))
-        result.humidity = float(current.get('humidity', 0))
+        result.temperature = safe_float(current.get('temperature'))
+        result.humidity = safe_float(current.get('humidity'))
         
         descriptions = current.get('weather_descriptions', [])
         if descriptions:
@@ -202,19 +267,16 @@ class WeatherstackSource:
         return result
 
 
-class MeteosourceSource:
+class MeteosourceSource(BaseAPISource):
     """Meteosource API - Requires API key. Free tier may lack humidity."""
     
     name = "Meteosource"
     
-    def __init__(self, api_key: str):
-        self._api_key = api_key
-    
-    async def fetch(self, city: str) -> WeatherData:
+    async def fetch(self, city: str, session: aiohttp.ClientSession,
+                   coords_cache: Optional[Dict[str, Tuple[float, float]]] = None) -> WeatherData:
         result = WeatherData(source=self.name)
         
-        if not self._api_key:
-            result.error = "API key required"
+        if not self._validate_api_key(result):
             return result
         
         url = (
@@ -222,53 +284,51 @@ class MeteosourceSource:
             f"place_id={quote(city)}&sections=current&"
             f"language=en&units=metric&key={self._api_key}"
         )
-        data, err = await http_get_json(url)
+        data, err = await http_get_json(url, session)
         if err:
             result.error = err
             return result
         
         current = data.get('current', {})
-        result.temperature = float(current.get('temperature', 0))
+        result.temperature = safe_float(current.get('temperature'))
         result.condition = current.get('summary', '')
         
         # Humidity may be None in free tier
-        if (humidity := current.get('humidity')) is not None:
-            result.humidity = float(humidity)
+        humidity = current.get('humidity')
+        if humidity is not None:
+            result.humidity = safe_float(humidity)
         
         return result
 
 
-class PirateWeatherSource:
+class PirateWeatherSource(BaseAPISource):
     """Pirate Weather API - Dark Sky compatible, requires API key."""
     
     name = "Pirate Weather"
     
-    def __init__(self, api_key: str):
-        self._api_key = api_key
-    
-    async def fetch(self, city: str) -> WeatherData:
+    async def fetch(self, city: str, session: aiohttp.ClientSession,
+                   coords_cache: Optional[Dict[str, Tuple[float, float]]] = None) -> WeatherData:
         result = WeatherData(source=self.name)
         
-        if not self._api_key:
-            result.error = "API key required"
+        if not self._validate_api_key(result):
             return result
         
-        # Geocoding (reuses shared function)
-        coords, err = await geocode_city(city)
+        coords, err = await get_coordinates(city, session, coords_cache)
         if err:
             result.error = err
             return result
         
         lat, lon = coords
         url = f"https://api.pirateweather.net/forecast/{self._api_key}/{lat},{lon}?units=si"
-        data, err = await http_get_json(url)
+        data, err = await http_get_json(url, session)
         if err:
             result.error = err
             return result
         
         currently = data.get('currently', {})
-        result.temperature = float(currently.get('temperature', 0))
-        result.humidity = float(currently.get('humidity', 0)) * 100  # 0-1 → 0-100
+        result.temperature = safe_float(currently.get('temperature'))
+        humidity_raw = safe_float(currently.get('humidity'))
+        result.humidity = humidity_raw * 100 if humidity_raw > 0 else 0.0  # 0-1 → 0-100
         result.condition = currently.get('summary', '')
         return result
 
@@ -277,19 +337,38 @@ class PirateWeatherSource:
 # Concurrent Fetching
 # =============================================================================
 
-async def fetch_weather_concurrently(city: str, sources: list) -> List[WeatherData]:
+async def fetch_weather_concurrently(city: str, sources: List[WeatherSource]) -> List[WeatherData]:
     """
     Fetch weather from all sources concurrently using asyncio.gather.
     Python's equivalent to Go's goroutines + channels pattern.
+    Uses shared session and geocoding cache for efficiency.
     """
-    tasks = [source.fetch(city) for source in sources]
-    results = await asyncio.gather(*tasks)
-    return list(results)
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
+        # Pre-geocode city if any source might need it
+        coords_cache: Dict[str, Tuple[float, float]] = {}
+        coords, err = await geocode_city(city, session)
+        if not err:
+            coords_cache[city] = coords
+        
+        # Wrap sources with timing
+        timed_sources = [TimedWeatherSource(source) for source in sources]
+        tasks = [source.fetch(city, session, coords_cache) for source in timed_sources]
+        results = await asyncio.gather(*tasks)
+        return results
 
 
-async def fetch_weather_sequentially(city: str, sources: list) -> List[WeatherData]:
+async def fetch_weather_sequentially(city: str, sources: List[WeatherSource]) -> List[WeatherData]:
     """Fetch weather sequentially for performance comparison."""
-    return [await source.fetch(city) for source in sources]
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
+        # Pre-geocode city if any source might need it
+        coords_cache: Dict[str, Tuple[float, float]] = {}
+        coords, err = await geocode_city(city, session)
+        if not err:
+            coords_cache[city] = coords
+        
+        # Wrap sources with timing
+        timed_sources = [TimedWeatherSource(source) for source in sources]
+        return [await source.fetch(city, session, coords_cache) for source in timed_sources]
 
 
 # =============================================================================
@@ -298,33 +377,46 @@ async def fetch_weather_sequentially(city: str, sources: list) -> List[WeatherDa
 
 def aggregate_weather(data: List[WeatherData]) -> Dict:
     """Calculate average temperature, humidity, and consensus condition."""
+    # Default result
+    result = {
+        'avg_temp': 0.0,
+        'avg_hum': 0.0,
+        'hum_count': 0,
+        'condition': 'No data',
+        'valid_count': 0
+    }
+    
     if not data:
-        return {'avg_temp': 0.0, 'avg_hum': 0.0, 'condition': 'No data', 'valid_count': 0}
+        return result
     
     valid = [d for d in data if d.error is None]
     if not valid:
-        return {'avg_temp': 0.0, 'avg_hum': 0.0, 'condition': 'No valid data', 'valid_count': 0}
+        result['condition'] = 'No valid data'
+        return result
     
-    avg_temp = sum(d.temperature for d in valid) / len(valid)
+    # Calculate aggregates
+    result['valid_count'] = len(valid)
+    result['avg_temp'] = sum(d.temperature for d in valid) / len(valid)
     
     # Only average humidity from sources that provide it
     humidities = [d.humidity for d in valid if d.humidity is not None]
-    avg_hum = sum(humidities) / len(humidities) if humidities else 0.0
+    if humidities:
+        result['avg_hum'] = sum(humidities) / len(humidities)
+        result['hum_count'] = len(humidities)
     
     # Find most common normalized condition
     condition_counts: Dict[str, int] = {}
     for d in valid:
         normalized = normalize_condition(d.condition)
-        condition_counts[normalized] = condition_counts.get(normalized, 0) + 1
+        if normalized:  # Skip empty conditions
+            condition_counts[normalized] = condition_counts.get(normalized, 0) + 1
     
-    most_common = max(condition_counts, key=condition_counts.get)
+    if condition_counts:
+        result['condition'] = max(condition_counts, key=condition_counts.get)
+    else:
+        result['condition'] = "Unknown"
     
-    return {
-        'avg_temp': avg_temp,
-        'avg_hum': avg_hum,
-        'condition': most_common,
-        'valid_count': len(valid)
-    }
+    return result
 
 
 # =============================================================================
@@ -341,48 +433,46 @@ def _map_wmo_code(code: int) -> str:
         return "Foggy"
     if code <= 67:
         return "Rainy"
-    if code <= 86:
+    if code <= 77:
         return "Snowy"
-    return "Stormy"
+    if code <= 86:
+        return "Snowy"  # Snow showers
+    if code <= 94:
+        return "Rainy"  # Showers
+    return "Stormy"  # Thunderstorm codes 95-99
 
 
-# Condition normalization mapping
-_CONDITION_MAP = [
-    (['clear', 'sunny'], 'Clear'),
-    (['partly'], 'Partly Cloudy'),
-    (['cloud', 'overcast'], 'Cloudy'),
-    (['rain', 'drizzle'], 'Rainy'),
-    (['snow', 'sleet'], 'Snowy'),
-    (['fog', 'mist'], 'Foggy'),
-    (['storm', 'thunder'], 'Stormy'),
-]
+# Unified condition mapping: Normalized name -> (keywords, emoji)
+CONDITION_INFO = {
+    'Clear': (['clear', 'sunny'], '☀️'),
+    'Partly Cloudy': (['partly'], '⛅'),
+    'Cloudy': (['cloud', 'overcast'], '☁️'),
+    'Rainy': (['rain', 'drizzle'], '🌧️'),
+    'Snowy': (['snow', 'sleet'], '❄️'),
+    'Foggy': (['fog', 'mist'], '🌫️'),
+    'Stormy': (['storm', 'thunder'], '⛈️'),
+}
 
 
 def normalize_condition(condition: str) -> str:
     """Normalize weather conditions to standard categories."""
     lower = condition.lower()
-    for keywords, normalized in _CONDITION_MAP:
+    for normalized, (keywords, _) in CONDITION_INFO.items():
         if any(kw in lower for kw in keywords):
             return normalized
     return condition
 
 
-# Emoji mapping
-_EMOJI_MAP = {
-    'clear': '☀️', 'sunny': '☀️',
-    'partly': '⛅',
-    'cloud': '☁️', 'overcast': '☁️',
-    'rain': '🌧️', 'drizzle': '🌧️',
-    'snow': '❄️', 'sleet': '❄️',
-    'fog': '🌫️', 'mist': '🌫️',
-    'storm': '⛈️', 'thunder': '⛈️',
-}
-
-
 def get_condition_emoji(condition: str) -> str:
     """Map weather condition to emoji."""
     lower = condition.lower()
-    for key, emoji in _EMOJI_MAP.items():
-        if key in lower:
+    
+    # Check normalized names first
+    for normalized, (keywords, emoji) in CONDITION_INFO.items():
+        if normalized.lower() in lower:
             return emoji
-    return '🌡️'
+        # Also check keywords
+        if any(kw in lower for kw in keywords):
+            return emoji
+    
+    return '🌡️'  # Default thermometer emoji

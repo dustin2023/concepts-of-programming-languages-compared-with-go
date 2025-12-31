@@ -54,6 +54,7 @@ class TestAggregateWeather:
         result = aggregate_weather(data)
 
         assert result["valid_count"] == 0
+        assert result["hum_count"] == 0
         assert result["condition"] == "No valid data"
 
     def test_empty_input(self):
@@ -61,6 +62,7 @@ class TestAggregateWeather:
         result = aggregate_weather([])
 
         assert result["valid_count"] == 0
+        assert result["hum_count"] == 0
         assert result["condition"] == "No data"
 
     def test_condition_consensus(self):
@@ -147,6 +149,7 @@ class TestWeatherData:
         assert data.humidity is None
         assert data.condition == ""
         assert data.error is None
+        assert data.duration_ms is None
 
     def test_with_error(self):
         """Error state."""
@@ -170,7 +173,7 @@ class MockSource:
         self._cond = cond
         self._error = error
 
-    async def fetch(self, city: str) -> WeatherData:
+    async def fetch(self, city: str, session, coords_cache=None):
         if self._error:
             return WeatherData(source=self.name, error=self._error)
         return WeatherData(
