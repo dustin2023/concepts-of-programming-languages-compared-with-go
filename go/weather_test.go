@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func init() {
@@ -156,3 +157,44 @@ type testError struct{}
 
 func (e *testError) Error() string { return "test error" }
 
+// ===== Integration Tests with Open-Meteo (real API) =====
+
+// TestOpenMeteoIntegrationBerlin tests real API fetch for Berlin.
+func TestOpenMeteoIntegrationBerlin(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	source := &OpenMeteoSource{}
+	result := source.Fetch(ctx, "Berlin")
+
+	// Verify successful fetch
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+	if result.Source != "Open-Meteo" {
+		t.Errorf("source = %q, want %q", result.Source, "Open-Meteo")
+	}
+	if result.Temperature < -50 || result.Temperature > 60 {
+		t.Errorf("temperature out of realistic range: %.1f°C", result.Temperature)
+	}
+	if result.Humidity == nil || *result.Humidity < 0 || *result.Humidity > 100 {
+		t.Errorf("invalid humidity: %v", result.Humidity)
+	}
+	if result.Condition == "" {
+		t.Error("condition should not be empty")
+	}
+}
+
+// TestOpenMeteoIntegrationInvalidCity tests graceful handling of invalid cities.
+func TestOpenMeteoIntegrationInvalidCity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	source := &OpenMeteoSource{}
+	result := source.Fetch(ctx, "XyzInvalidCity123")
+
+	// Should have an error, not crash
+	if result.Error == nil {
+		t.Error("expected error for invalid city, got nil")
+	}
+}

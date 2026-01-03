@@ -23,10 +23,10 @@ func validateCityName(city string) error {
 	if len(city) > 100 {
 		return fmt.Errorf("city name must not exceed 100 characters")
 	}
-	// Allow letters, numbers, spaces, hyphens, and apostrophes (common in city names)
-	matched, _ := regexp.MatchString(`^[a-zA-Z0-9\s\-']+$`, city)
+	// Allow Unicode letters (including umlauts, accents), numbers, spaces, hyphens, apostrophes, and periods
+	matched, _ := regexp.MatchString(`^[\p{L}0-9\s\-'\.]+$`, city)
 	if !matched {
-		return fmt.Errorf("city name contains invalid characters. Use letters, numbers, spaces, hyphens, and apostrophes")
+		return fmt.Errorf("city name contains invalid characters. Use letters (including ü, é, ñ), numbers, spaces, hyphens, apostrophes, and periods")
 	}
 	return nil
 }
@@ -36,18 +36,35 @@ func main() {
 	_ = godotenv.Load("../.env")
 
 	// Parse command-line flags
-	city := flag.String("city", "", "City name (required)")
+	city := flag.String("city", "", "City name (required, spaces allowed)")
 	seq := flag.Bool("sequential", false, "Use sequential fetching for performance comparison")
 	exclude := flag.String("exclude", "", "Comma-separated source names to exclude (e.g., 'wttr.in,WeatherAPI.com')")
 	flag.Parse()
 
+	// Handle multi-word city names from remaining args (e.g., "New York")
+	// Only append args that don't look like flags (don't start with -)
+	if *city != "" && len(flag.Args()) > 0 {
+		for _, arg := range flag.Args() {
+			if !strings.HasPrefix(arg, "-") {
+				*city = *city + " " + arg
+			}
+		}
+	}
+
 	// Validate city input
 	if err := validateCityName(*city); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Println("\nUsage: weather-aggregator --city=<city> [--sequential] [--exclude=source1,source2]")
+		fmt.Println("\nUsage: weather-aggregator --city <city> [OPTIONS]")
+		fmt.Println("       weather-aggregator [OPTIONS] --city <city>")
+		fmt.Println("\nOptions:")
 		fmt.Println("  --city       City name (required)")
-		fmt.Println("  --sequential Use sequential fetching instead of concurrent (optional)")
+		fmt.Println("               • Single word: --city Berlin")
+		fmt.Println("               • Multi-word:  --city \"New York\" (quotes recommended)")
+		fmt.Println("               • Alternative: --city=New\\ York (escape spaces)")
+		fmt.Println("  --sequential Use sequential fetching (optional)")
 		fmt.Println("  --exclude    Comma-separated source names to skip (optional)")
+		fmt.Println("\nNote: For multi-word cities, place other flags BEFORE --city,")
+		fmt.Println("      or use quotes: --sequential --city \"New York\"")
 		fmt.Println("\nAPI keys are loaded from .env file.")
 		os.Exit(1)
 	}

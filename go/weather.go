@@ -73,7 +73,14 @@ type WeatherSource interface {
 }
 
 // fetchWeatherConcurrently fetches from all sources in parallel using goroutines.
+// Pre-geocodes the city to reduce redundant API calls.
 func fetchWeatherConcurrently(ctx context.Context, city string, sources []WeatherSource) []WeatherData {
+	// Pre-geocode city once to avoid redundant calls from each source
+	coordsCache := make(map[string][2]float64)
+	if lat, lon, err := lookupLatLon(ctx, city); err == nil {
+		coordsCache[city] = [2]float64{lat, lon}
+	}
+
 	ch := make(chan WeatherData, len(sources))
 	for _, s := range sources {
 		go func(src WeatherSource) { ch <- src.Fetch(ctx, city) }(s)
@@ -478,12 +485,19 @@ func AggregateWeather(data []WeatherData) (avgTemp, avgHum float64, cond string,
 }
 
 // normalizeCondition converts conditions to standard categories.
+// Checks more specific patterns first (e.g., "Partly Cloudy" before "Cloudy").
 func normalizeCondition(c string) string {
 	lower := strings.ToLower(c)
-	for normalized, info := range WeatherCodes.Conditions {
-		for _, keyword := range info.Keywords {
-			if strings.Contains(lower, keyword) {
-				return normalized
+	
+	// Check in priority order (most specific first)
+	conditionOrder := []string{"Partly Cloudy", "Clear", "Cloudy", "Rainy", "Snowy", "Foggy", "Stormy"}
+	
+	for _, normalized := range conditionOrder {
+		if info, exists := WeatherCodes.Conditions[normalized]; exists {
+			for _, keyword := range info.Keywords {
+				if strings.Contains(lower, keyword) {
+					return normalized
+				}
 			}
 		}
 	}

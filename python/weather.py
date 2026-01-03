@@ -505,11 +505,20 @@ def _map_tomorrow_code(code: str) -> str:
 
 
 def normalize_condition(condition: str) -> str:
-    """Normalize conditions to standard categories via keyword matching."""
+    """Normalize conditions to standard categories via keyword matching.
+    
+    Checks more specific patterns first (e.g., 'Partly Cloudy' before 'Cloudy').
+    """
     lower = condition.lower()
-    for normalized, info in _CONDITIONS.items():
-        if any(kw in lower for kw in info["keywords"]):
-            return normalized
+    
+    # Check in priority order (most specific first)
+    condition_order = ["Partly Cloudy", "Clear", "Cloudy", "Rainy", "Snowy", "Foggy", "Stormy"]
+    
+    for normalized in condition_order:
+        if normalized in _CONDITIONS:
+            if any(kw in lower for kw in _CONDITIONS[normalized]["keywords"]):
+                return normalized
+    
     return condition
 
 

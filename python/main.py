@@ -34,11 +34,12 @@ def validate_city_name(city: str) -> Optional[str]:
     if not city:
         return None
 
+
     if len(city) > MAX_CITY_NAME_LENGTH:
         return None
 
-    # Allow letters, spaces, hyphens, apostrophes, periods
-    if not re.match(r"^[a-zA-Z\s\-'\.]+$", city):
+    # Allow Unicode letters (including umlauts, accents), numbers, spaces, hyphens, apostrophes, and periods
+    if not re.match(r"^[\w\s\-'\.]+$", city, re.UNICODE):
         return None
 
     return city
@@ -100,8 +101,17 @@ def display_results(data: List[WeatherData]) -> None:
 async def main() -> int:
     load_dotenv()
 
-    parser = argparse.ArgumentParser(description="Weather Data Aggregator")
-    parser.add_argument("--city", required=True, help="City name")
+    parser = argparse.ArgumentParser(
+        description="Weather Data Aggregator",
+        epilog="Example: %(prog)s --city New York --sequential"
+    )
+    parser.add_argument(
+        "--city",
+        nargs="+",
+        required=True,
+        metavar="NAME",
+        help="City name (spaces allowed, quotes optional)"
+    )
     parser.add_argument("--sequential", action="store_true", help="Sequential fetching")
     parser.add_argument(
         "--exclude", default="", help="Exclude sources (comma-separated)"
@@ -109,16 +119,21 @@ async def main() -> int:
 
     args = parser.parse_args()
 
-    city = validate_city_name(args.city)
+    # Join multi-word city names (e.g., ["New", "York"] -> "New York")
+    city_input = " ".join(args.city)
+    city = validate_city_name(city_input)
     if not city:
         print(
-            "Error: Invalid city name. Use only letters, spaces, hyphens, and periods.",
+            "Error: Invalid city name. Use letters (including ü, é, ñ), numbers, spaces, hyphens, apostrophes, and periods.",
             file=sys.stderr,
         )
         print(
-            "\nUsage: weather-aggregator --city=<city> [--sequential] [--exclude=source1,source2]"
+            "\nUsage: python main.py --city <city> [--sequential] [--exclude source1,source2]"
         )
-        print("  --city       City name (required)")
+        print("  --city       City name (required, spaces allowed)")
+        print("               Examples: --city Berlin")
+        print("                        --city New York")
+        print("                        --city \"St. Gallen\" (quotes optional)")
         print("  --sequential Use sequential fetching instead of concurrent (optional)")
         print("  --exclude    Comma-separated source names to skip (optional)")
         print("\nAPI keys are loaded from .env file.")
