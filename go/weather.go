@@ -6,19 +6,56 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
+// WeatherCodeRange represents a range of weather codes mapped to a condition.
+type WeatherCodeRange struct {
+	Min       int    `json:"min"`
+	Max       int    `json:"max"`
+	Condition string `json:"condition"`
+}
+
+// WeatherCodeConfig represents the structure of weather_codes.json.
+type WeatherCodeConfig struct {
+	WMO struct {
+		Ranges []WeatherCodeRange `json:"ranges"`
+	} `json:"wmo"`
+	TomorrowIO map[string]string `json:"tomorrow_io"`
+}
+
+// WeatherCodes holds the unified weather code mappings loaded from JSON.
+var WeatherCodes WeatherCodeConfig
+
+func init() {
+	// Load weather code mappings from shared JSON file.
+	// This is critical configuration - if it fails, the program cannot function correctly.
+	path := filepath.Join("..", "weather_codes.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FATAL: Could not load weather_codes.json: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Program requires this file to map weather codes correctly.\n")
+		os.Exit(1)
+	}
+	if err := json.Unmarshal(data, &WeatherCodes); err != nil {
+		fmt.Fprintf(os.Stderr, "FATAL: Invalid weather_codes.json format: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Please ensure the JSON file is valid and properly formatted.\n")
+		os.Exit(1)
+	}
+}
+
 // WeatherData represents the weather information from a single source.
 // Temperature is in Celsius, Humidity is a percentage (0-100).
+// Humidity pointer allows distinguishing between 0% humidity and missing humidity data.
 // Error field contains any error that occurred during fetching.
 // Duration measures the time taken to fetch from this source.
 type WeatherData struct {
 	Source      string
 	Temperature float64
-	Humidity    float64
+	Humidity    *float64 // Pointer to distinguish between 0% and missing data
 	Condition   string
 	Error       error
 	Duration    time.Duration
@@ -101,8 +138,8 @@ func lookupLatLon(ctx context.Context, city string) (float64, float64, error) {
 
 // --- Weather API Implementations ---
 // Each API source implements the WeatherSource interface.
-// Free sources: Open-Meteo, wttr.in
-// API key required: WeatherAPI.com, Weatherstack, Meteosource, Pirate Weather
+// Free sources: Open-Meteo
+// API key required: WeatherAPI.com, Weatherstack, Meteosource, Pirate Weather, Tomorrow.io
 
 // OpenMeteoSource fetches weather from Open-Meteo API (free, no key required).
 // Uses geocoding API to convert city name to coordinates, then fetches weather.
@@ -141,39 +178,52 @@ func (o *OpenMeteoSource) Fetch(ctx context.Context, city string) WeatherData {
 		res.Duration = time.Since(start)
 		return res
 	}
-	res.Temperature, res.Humidity, res.Condition = data.Current.Temp, data.Current.Hum, mapWMOCode(data.Current.Code)
+	res.Temperature = data.Current.Temp
+	hum := data.Current.Hum
+	res.Humidity = &hum
+	res.Condition = mapWMOCode(data.Current.Code)
 	res.Duration = time.Since(start)
 	return res
 }
 
-// mapWMOCode converts WMO weather codes to human-readable condition strings.
-// WMO codes: 0=Clear, 1-3=Cloudy, 45-48=Fog, 51-67=Rain, 71-86=Snow, 95+=Storms
+// mapWMOCode converts WMO weather codes to human-readable condition strings using range-based mapping.
 func mapWMOCode(code int) string {
-	switch {
-	case code == 0:
-		return "Clear"
-	case code <= 3:
-		return "Partly Cloudy"
-	case code <= 48:
-		return "Foggy"
-	case code <= 67:
-		return "Rainy"
-	case code <= 86:
-		return "Snowy"
-	default:
-		return "Stormy"
+	for _, r := range WeatherCodes.WMO.Ranges {
+		if code >= r.Min && code <= r.Max {
+			return r.Condition
+		}
 	}
+	return "Unknown"
 }
 
-// WttrinSource fetches weather from wttr.in API (free, no key required).
-// Returns data in JSON format with temperature, humidity, and weather description.
-type WttrinSource struct{}
+// mapTomorrowCode converts Tomorrow.io weather codes to human-readable condition strings.
+func mapTomorrowCode(code int) string {
+	if condition := WeatherCodes.TomorrowIO[fmt.Sprintf("%d", code)]; condition != "" {
+		return condition
+	}
+	return "Unknown"
+}
 
-func (w *WttrinSource) Name() string { return "wttr.in" }
-func (w *WttrinSource) Fetch(ctx context.Context, city string) WeatherData {
+// TomorrowIOSource fetches weather from Tomorrow.io API (requires API key).
+// Returns data in JSON format with temperature, humidity, and weather description.
+type TomorrowIOSource struct {
+	apiKey string
+}
+
+func (t *TomorrowIOSource) Name() string { return "Tomorrow.io" }
+func (t *TomorrowIOSource) Fetch(ctx context.Context, city string) WeatherData {
 	start := time.Now()
-	res := WeatherData{Source: w.Name()}
-	resp, _, err := doGet(ctx, "https://wttr.in/"+url.QueryEscape(city)+"?format=j1")
+	res := WeatherData{Source: t.Name()}
+
+	lat, lon, err := lookupLatLon(ctx, city)
+	if err != nil {
+		res.Error = fmt.Errorf("geocoding: %w", err)
+		res.Duration = time.Since(start)
+		return res
+	}
+
+	url := fmt.Sprintf("https://api.tomorrow.io/v4/weather/realtime?location=%.4f,%.4f&apikey=%s", lat, lon, t.apiKey)
+	resp, _, err := doGet(ctx, url)
 	if err != nil {
 		res.Error = err
 		res.Duration = time.Since(start)
@@ -182,38 +232,24 @@ func (w *WttrinSource) Fetch(ctx context.Context, city string) WeatherData {
 	defer resp.Body.Close()
 
 	var data struct {
-		Current []struct {
-			TempC string `json:"temp_C"`
-			Hum   string `json:"humidity"`
-			Desc  []struct {
-				Val string `json:"value"`
-			} `json:"weatherDesc"`
-		} `json:"current_condition"`
+		Data struct {
+			Values struct {
+				Temp      float64 `json:"temperature"`
+				Hum       float64 `json:"humidity"`
+				WeatherCd int     `json:"weatherCode"`
+			} `json:"values"`
+		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		res.Error = fmt.Errorf("decode: %w", err)
-		return res
-	}
-	if len(data.Current) == 0 {
-		res.Error = fmt.Errorf("no current weather data")
+		res.Duration = time.Since(start)
 		return res
 	}
 
-	temp, err := strconv.ParseFloat(strings.TrimSpace(data.Current[0].TempC), 64)
-	if err != nil {
-		res.Error = fmt.Errorf("parse temperature: %w", err)
-		return res
-	}
-	hum, err := strconv.ParseFloat(strings.TrimSpace(data.Current[0].Hum), 64)
-	if err != nil {
-		res.Error = fmt.Errorf("parse humidity: %w", err)
-		return res
-	}
-	res.Temperature = temp
-	res.Humidity = hum
-	if len(data.Current[0].Desc) > 0 {
-		res.Condition = data.Current[0].Desc[0].Val
-	}
+	res.Temperature = data.Data.Values.Temp
+	hum := data.Data.Values.Hum
+	res.Humidity = &hum
+	res.Condition = mapTomorrowCode(data.Data.Values.WeatherCd)
 	res.Duration = time.Since(start)
 	return res
 }
@@ -252,7 +288,10 @@ func (w *WeatherAPISource) Fetch(ctx context.Context, city string) WeatherData {
 		res.Duration = time.Since(start)
 		return res
 	}
-	res.Temperature, res.Humidity, res.Condition = data.Current.TempC, data.Current.Hum, data.Current.Cond.Text
+	res.Temperature = data.Current.TempC
+	hum := data.Current.Hum
+	res.Humidity = &hum
+	res.Condition = data.Current.Cond.Text
 	res.Duration = time.Since(start)
 	return res
 }
@@ -289,7 +328,9 @@ func (w *WeatherstackSource) Fetch(ctx context.Context, city string) WeatherData
 		res.Duration = time.Since(start)
 		return res
 	}
-	res.Temperature, res.Humidity = data.Current.Temp, float64(data.Current.Hum)
+	res.Temperature = data.Current.Temp
+	hum := float64(data.Current.Hum)
+	res.Humidity = &hum
 	if len(data.Current.Desc) > 0 {
 		res.Condition = data.Current.Desc[0]
 	}
@@ -326,13 +367,16 @@ func (m *MeteosourceSource) Fetch(ctx context.Context, city string) WeatherData 
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		res.Error = err
+		res.Duration = time.Since(start)
 		return res
 	}
 	res.Temperature, res.Condition = data.Current.Temp, data.Current.Summary
 	if h, ok := data.Current.Hum.(float64); ok {
-		res.Humidity = h
+		res.Humidity = &h
 	} else if s, ok := data.Current.Hum.(string); ok {
-		fmt.Sscanf(strings.TrimSuffix(s, "%"), "%f", &res.Humidity)
+		var hum float64
+		fmt.Sscanf(strings.TrimSuffix(s, "%"), "%f", &hum)
+		res.Humidity = &hum
 	}
 	res.Duration = time.Since(start)
 	return res
@@ -377,7 +421,10 @@ func (p *PirateWeatherSource) Fetch(ctx context.Context, city string) WeatherDat
 		res.Duration = time.Since(start)
 		return res
 	}
-	res.Temperature, res.Humidity, res.Condition = data.Currently.Temp, data.Currently.Hum*100, data.Currently.Sum
+	res.Temperature = data.Currently.Temp
+	hum := data.Currently.Hum * 100
+	res.Humidity = &hum
+	res.Condition = data.Currently.Sum
 	res.Duration = time.Since(start)
 	return res
 }
@@ -387,18 +434,23 @@ func (p *PirateWeatherSource) Fetch(ctx context.Context, city string) WeatherDat
 // AggregateWeather calculates average temperature, humidity, and consensus condition.
 // Only processes WeatherData entries with no errors (valid == number of successful responses).
 // Returns averaged values and the most common normalized weather condition.
+// Humidity average only includes sources that provided humidity data (non-nil pointers).
 func AggregateWeather(data []WeatherData) (avgTemp, avgHum float64, cond string, valid int) {
 	if len(data) == 0 {
 		return 0, 0, "No data", 0
 	}
 
 	var tempSum, humSum float64
+	var humCount int
 	condCount := make(map[string]int)
 
 	for _, d := range data {
 		if d.Error == nil {
 			tempSum += d.Temperature
-			humSum += d.Humidity
+			if d.Humidity != nil {
+				humSum += *d.Humidity
+				humCount++
+			}
 			condCount[normalizeCondition(d.Condition)]++
 			valid++
 		}
@@ -409,7 +461,9 @@ func AggregateWeather(data []WeatherData) (avgTemp, avgHum float64, cond string,
 	}
 
 	avgTemp = tempSum / float64(valid)
-	avgHum = humSum / float64(valid)
+	if humCount > 0 {
+		avgHum = humSum / float64(humCount)
+	}
 
 	maxCount := 0
 	for c, count := range condCount {
@@ -420,59 +474,43 @@ func AggregateWeather(data []WeatherData) (avgTemp, avgHum float64, cond string,
 	return
 }
 
+// ConditionInfo maps normalized conditions to keywords and emoji for consistent handling.
+var ConditionInfo = map[string]struct{ keywords []string; emoji string }{
+	"Clear":         {[]string{"clear", "sunny"}, "☀️"},
+	"Partly Cloudy": {[]string{"partly"}, "⛅"},
+	"Cloudy":        {[]string{"cloud", "overcast"}, "☁️"},
+	"Rainy":         {[]string{"rain", "drizzle"}, "🌧️"},
+	"Snowy":         {[]string{"snow", "sleet"}, "❄️"},
+	"Foggy":         {[]string{"fog", "mist"}, "🌫️"},
+	"Stormy":        {[]string{"storm", "thunder"}, "⛈️"},
+}
+
 // normalizeCondition converts various weather condition strings to standard categories.
 // Helps aggregate similar conditions from different APIs (e.g., "Sunny" and "Clear" → "Clear").
-// Categories: Clear, Partly Cloudy, Cloudy, Rainy, Snowy, Stormy, Foggy.
+// Uses a map-based approach for consistency with Python implementation.
 func normalizeCondition(c string) string {
 	lower := strings.ToLower(c)
-	if strings.Contains(lower, "clear") || strings.Contains(lower, "sunny") {
-		return "Clear"
-	}
-	if strings.Contains(lower, "partly") {
-		return "Partly Cloudy"
-	}
-	if strings.Contains(lower, "cloud") || strings.Contains(lower, "overcast") {
-		return "Cloudy"
-	}
-	if strings.Contains(lower, "rain") || strings.Contains(lower, "drizzle") {
-		return "Rainy"
-	}
-	if strings.Contains(lower, "snow") || strings.Contains(lower, "sleet") {
-		return "Snowy"
-	}
-	if strings.Contains(lower, "fog") || strings.Contains(lower, "mist") {
-		return "Foggy"
-	}
-	if strings.Contains(lower, "storm") || strings.Contains(lower, "thunder") {
-		return "Stormy"
+	for normalized, info := range ConditionInfo {
+		for _, keyword := range info.keywords {
+			if strings.Contains(lower, keyword) {
+				return normalized
+			}
+		}
 	}
 	return c
 }
 
 // GetConditionEmoji maps weather conditions to appropriate emoji for better visualization.
-// Used in output display to make results more user-friendly.
+// Uses the shared ConditionInfo map for consistency. Returns a default thermometer emoji
+// if the condition doesn't match any known categories.
 func GetConditionEmoji(c string) string {
 	lower := strings.ToLower(c)
-	if strings.Contains(lower, "clear") || strings.Contains(lower, "sunny") {
-		return "☀️"
-	}
-	if strings.Contains(lower, "partly") {
-		return "⛅"
-	}
-	if strings.Contains(lower, "cloud") || strings.Contains(lower, "overcast") {
-		return "☁️"
-	}
-	if strings.Contains(lower, "rain") || strings.Contains(lower, "drizzle") {
-		return "🌧️"
-	}
-	if strings.Contains(lower, "snow") || strings.Contains(lower, "sleet") {
-		return "❄️"
-	}
-	if strings.Contains(lower, "fog") || strings.Contains(lower, "mist") {
-		return "🌫️"
-	}
-	if strings.Contains(lower, "storm") || strings.Contains(lower, "thunder") {
-		return "⛈️"
+	for _, info := range ConditionInfo {
+		for _, keyword := range info.keywords {
+			if strings.Contains(lower, keyword) {
+				return info.emoji
+			}
+		}
 	}
 	return "🌡️"
 }

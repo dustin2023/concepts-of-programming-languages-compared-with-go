@@ -1,18 +1,30 @@
 """Weather Aggregator Tests - Core Functionality"""
 
 import pytest
-from weather import WeatherData, aggregate_weather, normalize_condition, safe_float
+from weather import WeatherData, aggregate_weather, normalize_condition
+from unittest.mock import MagicMock, AsyncMock
 
 
-class TestSafeFloat:
-    """Tests for safe_float helper."""
+class TestHttpGetJson:
+    """Tests for http_get_json error handling."""
 
-    @pytest.mark.parametrize(
-        "value,expected",
-        [(42.5, 42.5), ("42.5", 42.5), (None, 0.0), ("invalid", 0.0)],
-    )
-    def test_conversion(self, value, expected):
-        assert safe_float(value) == expected
+    @pytest.mark.asyncio
+    async def test_http_error(self):
+        """Test non-200 status code."""
+        from weather import http_get_json
+
+        mock_resp = MagicMock()
+        mock_resp.status = 404
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock()
+
+        session = MagicMock()
+        session.get.return_value = mock_resp
+
+        data, err = await http_get_json("http://test.com", session)
+
+        assert data is None
+        assert err == "HTTP 404"
 
 
 class TestValidateCityName:

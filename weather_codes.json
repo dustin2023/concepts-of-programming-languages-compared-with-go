@@ -1,0 +1,40 @@
+{
+  "wmo": {
+    "ranges": [
+      {"min": 0, "max": 0, "condition": "Clear"},
+      {"min": 1, "max": 3, "condition": "Partly Cloudy"},
+      {"min": 4, "max": 44, "condition": "Cloudy"},
+      {"min": 45, "max": 48, "condition": "Foggy"},
+      {"min": 49, "max": 67, "condition": "Rainy"},
+      {"min": 68, "max": 79, "condition": "Snowy"},
+      {"min": 80, "max": 89, "condition": "Rainy"},
+      {"min": 90, "max": 99, "condition": "Stormy"}
+    ]
+  },
+  "tomorrow_io": {
+    "0": "Unknown",
+    "1000": "Clear",
+    "1001": "Cloudy",
+    "1100": "Mostly Clear",
+    "1101": "Partly Cloudy",
+    "1102": "Mostly Cloudy",
+    "2000": "Foggy",
+    "2100": "Foggy",
+    "4000": "Rainy",
+    "4001": "Rainy",
+    "4200": "Rainy",
+    "4201": "Rainy",
+    "5000": "Snowy",
+    "5001": "Snowy",
+    "5100": "Snowy",
+    "5101": "Snowy",
+    "6000": "Rainy",
+    "6001": "Rainy",
+    "6200": "Rainy",
+    "6201": "Rainy",
+    "7000": "Snowy",
+    "7101": "Snowy",
+    "7102": "Snowy",
+    "8000": "Stormy"
+  }
+}

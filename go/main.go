@@ -5,15 +5,36 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
+func validateCityName(city string) error {
+	trimmed := strings.TrimSpace(city)
+	if trimmed == "" {
+		return fmt.Errorf("city name is required and cannot be empty")
+	}
+	if len(trimmed) < 2 {
+		return fmt.Errorf("city name must be at least 2 characters long")
+	}
+	if len(city) > 100 {
+		return fmt.Errorf("city name must not exceed 100 characters")
+	}
+	// Allow letters, numbers, spaces, hyphens, and apostrophes (common in city names)
+	matched, _ := regexp.MatchString(`^[a-zA-Z0-9\s\-']+$`, city)
+	if !matched {
+		return fmt.Errorf("city name contains invalid characters. Use letters, numbers, spaces, hyphens, and apostrophes")
+	}
+	return nil
+}
+
 func main() {
 	// Load environment variables from .env file (ignore errors if file doesn't exist)
-	_ = godotenv.Load() // or better os.Getenv?
+	// use .env from parent directory
+	_ = godotenv.Load("../.env")
 
 	// Define and parse command-line flags
 	city := flag.String("city", "", "City name (required)")
@@ -21,15 +42,15 @@ func main() {
 	exclude := flag.String("exclude", "", "Comma-separated source names to exclude (e.g., 'wttr.in,WeatherAPI.com')")
 	flag.Parse()
 
-	// Validate city input - must not be empty or whitespace-only
-	if *city == "" || strings.TrimSpace(*city) == "" {
-		fmt.Fprintln(os.Stderr, "Error: City name is required and cannot be empty")
+	// Validate city input using dedicated validation function
+	if err := validateCityName(*city); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Println("\nUsage: weather-aggregator --city=<city> [--sequential] [--exclude=source1,source2]")
 		fmt.Println("  --city       City name (required)")
 		fmt.Println("  --sequential Use sequential fetching instead of concurrent (optional)")
 		fmt.Println("  --exclude    Comma-separated source names to skip (optional)")
 		fmt.Println("\nAPI keys are loaded from .env file.")
-		fmt.Println("Free sources: Open-Meteo, wttr.in")
+		fmt.Println("Free sources: Open-Meteo")
 		os.Exit(1)
 	}
 
@@ -79,25 +100,21 @@ func main() {
 	}
 	duration := time.Since(start)
 
-	fmt.Printf("⏱️  Completed in %v\n\n", duration)
+	fmt.Printf("⏱️  Completed in %.3fs\n\n", duration.Seconds())
 	displayResults(data)
 }
 
 // initSources creates and returns all available weather sources.
-// Free sources (Open-Meteo, wttr.in) are always included.
-// API-key-based sources are conditionally added if keys are found in environment.
 func initSources() []WeatherSource {
-	// Always include free sources
-	sources := []WeatherSource{&OpenMeteoSource{}, &WttrinSource{}}
+	sources := []WeatherSource{&OpenMeteoSource{}}
 
-	// Helper function to conditionally add sources based on API key availability
 	addSource := func(envKey string, create func(string) WeatherSource) {
 		if val := os.Getenv(envKey); val != "" {
 			sources = append(sources, create(val))
 		}
 	}
 
-	// Add optional sources if API keys are available
+	addSource("TOMORROW_API_KEY", func(k string) WeatherSource { return &TomorrowIOSource{apiKey: k} })
 	addSource("WEATHER_API_COM_KEY", func(k string) WeatherSource { return &WeatherAPISource{k} })
 	addSource("WEATHERSTACK_API_KEY", func(k string) WeatherSource { return &WeatherstackSource{k} })
 	addSource("METEOSOURCE_API_KEY", func(k string) WeatherSource { return &MeteosourceSource{k} })
@@ -122,9 +139,13 @@ func fetchSequential(ctx context.Context, city string, sources []WeatherSource) 
 func displayResults(data []WeatherData) {
 	for _, d := range data {
 		if d.Error != nil {
-			fmt.Printf("❌ %-18s ERROR: %v [%v]\n", d.Source+":", d.Error, d.Duration)
+			fmt.Printf("❌ %-18s ERROR: %v [%.0fms]\n", d.Source+":", d.Error, d.Duration.Seconds()*1000)
 		} else {
-			fmt.Printf("✅ %-18s %.1f°C, %.0f%% humidity, %s [%v]\n", d.Source+":", d.Temperature, d.Humidity, d.Condition, d.Duration)
+			humStr := "N/A"
+			if d.Humidity != nil {
+				humStr = fmt.Sprintf("%.0f%%", *d.Humidity)
+			}
+			fmt.Printf("✅ %-18s %.1f°C, %s humidity, %s [%.0fms]\n", d.Source+":", d.Temperature, humStr, d.Condition, d.Duration.Seconds()*1000)
 		}
 	}
 
@@ -134,7 +155,11 @@ func displayResults(data []WeatherData) {
 	fmt.Printf("\n📊 Aggregated (%d/%d valid):\n", valid, len(data))
 	if valid > 0 {
 		fmt.Printf("→ Avg Temperature: %.2f°C\n", avgTemp)
-		fmt.Printf("→ Avg Humidity:    %.1f%%\n", avgHum)
+		if avgHum > 0 {
+			fmt.Printf("→ Avg Humidity:    %.1f%%\n", avgHum)
+		} else {
+			fmt.Printf("→ Avg Humidity:    N/A\n")
+		}
 		fmt.Printf("→ Consensus:       %s %s\n", cond, emoji)
 	} else {
 		fmt.Println("→ No valid data available")

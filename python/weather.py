@@ -6,14 +6,21 @@ Comparable to Go's goroutines and channels implementation.
 
 import asyncio
 import aiohttp
+import json
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Protocol
 from urllib.parse import quote
 
 # Configuration Constants
 MAX_CITY_NAME_LENGTH = 100
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10)
+
+# Load weather code mappings from shared JSON file
+_WEATHER_CODES_PATH = Path(__file__).parent.parent / "weather_codes.json"
+with open(_WEATHER_CODES_PATH) as f:
+    _WEATHER_CODES = json.load(f)
 
 
 @dataclass
@@ -42,7 +49,10 @@ class WeatherSource(Protocol):
 
 
 def safe_float(value, default: float = 0.0) -> float:
-    """Safely convert value to float, return default if invalid."""
+    """Safely convert a value to float, returning a default on any error.
+
+    Handles None, non-numeric strings, and type mismatches gracefully.
+    """
     if value is None:
         return default
     try:
@@ -54,7 +64,16 @@ def safe_float(value, default: float = 0.0) -> float:
 async def http_get_json(
     url: str, session: aiohttp.ClientSession
 ) -> Tuple[Optional[dict], Optional[str]]:
-    """Perform HTTP GET and return JSON response."""
+    """Perform HTTP GET request and return parsed JSON response.
+
+    Args:
+        url: The URL to fetch
+        session: aiohttp ClientSession with timeout configured
+
+    Returns:
+        Tuple of (parsed_json, error_string). If successful, error is None.
+        Returns (None, error_string) on any failure.
+    """
     try:
         async with session.get(url) as resp:
             if resp.status != 200:
@@ -62,8 +81,12 @@ async def http_get_json(
             return await resp.json(), None
     except asyncio.TimeoutError:
         return None, "timeout"
-    except aiohttp.ClientError:
-        return None, "network error"
+    except aiohttp.ClientConnectorError as e:
+        return None, f"connection failed: {str(e)}"
+    except aiohttp.ServerTimeoutError:
+        return None, "server timeout"
+    except aiohttp.ClientError as e:
+        return None, f"network error: {type(e).__name__}"
     except ValueError:
         return None, "invalid JSON"
     except Exception as e:
@@ -147,45 +170,43 @@ class OpenMeteoSource:
         return result
 
 
-class WttrinSource:
-    """wttr.in API - Free, no API key required."""
+class TomorrowIOSource(BaseAPISource):
+    """Tomorrow.io API - Requires API key. Global weather data with coordinates."""
 
-    name = "wttr.in"
+    name = "Tomorrow.io"
 
     async def fetch(
         self,
         city: str,
         session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,  # can I remove this?
+        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
 
-        data, err = await http_get_json(
-            f"https://wttr.in/{quote(city)}?format=j1", session
-        )
+        if not self._validate_api_key(result):
+            return result
+
+        coords, err = await get_coordinates(city, session, coords_cache)
         if err:
             result.error = err
             return result
 
-        try:
-            conditions = data.get("current_condition", [])
-            if not conditions or not isinstance(conditions, list):
-                result.error = "invalid response format"
-                return result
+        lat, lon = coords
+        url = f"https://api.tomorrow.io/v4/weather/realtime?location={lat},{lon}&apikey={self._api_key}"
+        data, err = await http_get_json(url, session)
+        if err:
+            result.error = err
+            return result
 
-            current = conditions[0]
-            if not current or not isinstance(current, dict):
-                result.error = "invalid response format"
-                return result
+        # Extract nested data safely - .get() handles missing keys gracefully
+        data_obj = data.get("data", {})
+        values = data_obj.get("values", {})
 
-            result.temperature = safe_float(current.get("temp_C"))
-            result.humidity = safe_float(current.get("humidity"))
-
-            desc = current.get("weatherDesc", [])
-            if desc and isinstance(desc, list) and desc[0]:
-                result.condition = desc[0].get("value", "")
-        except (KeyError, IndexError, TypeError) as e:
-            result.error = f"parse error: {e.__class__.__name__}"
+        result.temperature = safe_float(values.get("temperature"))
+        result.humidity = safe_float(values.get("humidity"))
+        result.condition = values.get("weatherCode", "")
+        if result.condition:
+            result.condition = _map_tomorrow_code(result.condition)
 
         return result
 
@@ -199,7 +220,7 @@ class WeatherAPISource(BaseAPISource):
         self,
         city: str,
         session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,  # can I remove this?
+        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
 
@@ -228,14 +249,13 @@ class WeatherstackSource(BaseAPISource):
         self,
         city: str,
         session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,  # can I remove this?
+        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
 
         if not self._validate_api_key(result):
             return result
 
-        # Free tier requires HTTP, not HTTPS
         url = f"http://api.weatherstack.com/current?access_key={self._api_key}&query={quote(city)}"
         data, err = await http_get_json(url, session)
         if err:
@@ -262,16 +282,22 @@ class MeteosourceSource(BaseAPISource):
         self,
         city: str,
         session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,  # can I remove this?
+        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
 
         if not self._validate_api_key(result):
             return result
 
+        coords, err = await get_coordinates(city, session, coords_cache)
+        if err:
+            result.error = err
+            return result
+
+        lat, lon = coords
         url = (
             f"https://www.meteosource.com/api/v1/free/point?"
-            f"place_id={quote(city)}&sections=current&"
+            f"lat={lat}&lon={lon}&sections=current&"
             f"language=en&units=metric&key={self._api_key}"
         )
         data, err = await http_get_json(url, session)
@@ -327,52 +353,51 @@ class PirateWeatherSource(BaseAPISource):
         return result
 
 
+async def _fetch_with_timing(
+    source: WeatherSource,
+    city: str,
+    session: aiohttp.ClientSession,
+    coords_cache: Dict[str, Tuple[float, float]],
+) -> WeatherData:
+    """Fetch weather from a source and measure duration.
+    
+    Helper function used by both concurrent and sequential fetch functions.
+    """
+    start = time.perf_counter()
+    result = await source.fetch(city, session, coords_cache)
+    result.duration_ms = (time.perf_counter() - start) * 1000
+    return result
+
+
 async def fetch_weather_concurrently(
     city: str, sources: List[WeatherSource]
 ) -> List[WeatherData]:
     """Fetch weather from all sources concurrently using asyncio.gather."""
-
-    async def fetch_with_timing(source: WeatherSource) -> WeatherData:
-        start = time.perf_counter()
-        result = await source.fetch(city, session, coords_cache)
-        result.duration_ms = (time.perf_counter() - start) * 1000
-        return result
-
-    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:   # is the session correct implemented and why do I need it?
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:       # TODO maybe create function for session creation
         coords_cache: Dict[str, Tuple[float, float]] = {}
         coords, err = await geocode_city(city, session)
         if not err:
             coords_cache[city] = coords
 
-        tasks = [fetch_with_timing(source) for source in sources]
-        return await asyncio.gather(
-            *tasks
-        )  # add return_exceptions=True? or use asyncio.as_completed? or Semaphore?
+        tasks = [_fetch_with_timing(source, city, session, coords_cache) for source in sources]
+        return await asyncio.gather(*tasks)
 
 
 async def fetch_weather_sequentially(
     city: str, sources: List[WeatherSource]
 ) -> List[WeatherData]:
     """Fetch weather sequentially for performance comparison."""
-
-    async def fetch_with_timing(source: WeatherSource) -> WeatherData:
-        start = time.perf_counter()
-        result = await source.fetch(city, session, coords_cache)
-        result.duration_ms = (time.perf_counter() - start) * 1000
-        return result
-
-    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:   # TODO maybe create function for session creation
         coords_cache: Dict[str, Tuple[float, float]] = {}
         coords, err = await geocode_city(city, session)
         if not err:
             coords_cache[city] = coords
 
-        return [await fetch_with_timing(source) for source in sources]
+        return [await _fetch_with_timing(source, city, session, coords_cache) for source in sources]
 
 
 def aggregate_weather(data: List[WeatherData]) -> Dict:
     """Calculate average temperature, humidity, and consensus condition."""
-    # Default result
     result = {
         "avg_temp": 0.0,
         "avg_hum": 0.0,
@@ -389,21 +414,18 @@ def aggregate_weather(data: List[WeatherData]) -> Dict:
         result["condition"] = "No valid data"
         return result
 
-    # Calculate aggregates
     result["valid_count"] = len(valid)
     result["avg_temp"] = sum(d.temperature for d in valid) / len(valid)
 
-    # Only average humidity from sources that provide it
     humidities = [d.humidity for d in valid if d.humidity is not None]
     if humidities:
         result["avg_hum"] = sum(humidities) / len(humidities)
         result["hum_count"] = len(humidities)
 
-    # Find most common normalized condition
     condition_counts: Dict[str, int] = {}
     for d in valid:
         normalized = normalize_condition(d.condition)
-        if normalized:  # Skip empty conditions
+        if normalized:
             condition_counts[normalized] = condition_counts.get(normalized, 0) + 1
 
     if condition_counts:
@@ -415,22 +437,20 @@ def aggregate_weather(data: List[WeatherData]) -> Dict:
 
 
 def _map_wmo_code(code: int) -> str:
-    """Map WMO weather codes to readable conditions."""
-    if code == 0:
-        return "Clear"
-    if code <= 3:
-        return "Partly Cloudy"
-    if code <= 48:
-        return "Foggy"
-    if code <= 67:
-        return "Rainy"
-    if code <= 77:
-        return "Snowy"
-    if code <= 86:
-        return "Snowy"  # Snow showers
-    if code <= 94:
-        return "Rainy"  # Showers
-    return "Stormy"  # Thunderstorm codes 95-99
+    """Map WMO weather codes to readable conditions using range-based mapping."""
+    for range_def in _WEATHER_CODES["wmo"]["ranges"]:
+        if range_def["min"] <= code <= range_def["max"]:
+            return range_def["condition"]
+    return "Unknown"
+
+
+def _map_tomorrow_code(code: str) -> str:
+    """Map Tomorrow.io weather codes to readable conditions using shared mapping."""
+    try:
+        code_str = str(int(code))
+    except (ValueError, TypeError):
+        return "Unknown"
+    return _WEATHER_CODES["tomorrow_io"].get(code_str, "Unknown")
 
 
 # Unified condition mapping: Normalized name -> (keywords, emoji)
@@ -446,7 +466,11 @@ CONDITION_INFO = {
 
 
 def normalize_condition(condition: str) -> str:
-    """Normalize weather conditions to standard categories."""
+    """Normalize weather conditions to standard categories.
+
+    Maps various weather descriptions to standard conditions using keyword matching.
+    Uses shared condition mappings loaded from weather_codes.json.
+    """
     lower = condition.lower()
     for normalized, (keywords, _) in CONDITION_INFO.items():
         if any(kw in lower for kw in keywords):
@@ -455,15 +479,18 @@ def normalize_condition(condition: str) -> str:
 
 
 def get_condition_emoji(condition: str) -> str:
-    """Map weather condition to emoji."""
+    """Map weather condition to emoji for better visualization.
+
+    Uses the shared condition mappings from weather_codes.json to provide
+    consistent emoji representation across languages and APIs.
+    Returns a default thermometer emoji if no match is found.
+    """
     lower = condition.lower()
 
-    # Check normalized names first
     for normalized, (keywords, emoji) in CONDITION_INFO.items():
         if normalized.lower() in lower:
             return emoji
-        # Also check keywords
         if any(kw in lower for kw in keywords):
             return emoji
 
-    return "🌡️"  # Default thermometer emoji
+    return "🌡️"

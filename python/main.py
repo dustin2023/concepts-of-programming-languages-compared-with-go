@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from weather import (
     WeatherData,
     OpenMeteoSource,
-    WttrinSource,
+    TomorrowIOSource,
     WeatherAPISource,
     WeatherstackSource,
     MeteosourceSource,
@@ -75,10 +75,12 @@ def init_sources() -> list:
     """Initialize all available weather sources."""
     sources = [
         OpenMeteoSource(),
-        WttrinSource(),
     ]
 
     # Add API-key sources if keys are available
+    if key := os.getenv("TOMORROW_API_KEY"):
+        sources.append(TomorrowIOSource(key))
+
     if key := os.getenv("WEATHER_API_COM_KEY"):
         sources.append(WeatherAPISource(key))
 
@@ -137,6 +139,11 @@ async def main() -> int:
     parser.add_argument(
         "--sequential", action="store_true", help="Use sequential fetching"
     )
+    parser.add_argument(
+        "--exclude",
+        default="",
+        help="Comma-separated source names to exclude (e.g., 'wttr.in,WeatherAPI.com')",
+    )
 
     args = parser.parse_args()
 
@@ -146,9 +153,27 @@ async def main() -> int:
             "Error: Invalid city name. Use only letters, spaces, hyphens, and periods.",
             file=sys.stderr,
         )
+        print(
+            "\nUsage: weather-aggregator --city=<city> [--sequential] [--exclude=source1,source2]"
+        )
+        print("  --city       City name (required)")
+        print("  --sequential Use sequential fetching instead of concurrent (optional)")
+        print("  --exclude    Comma-separated source names to skip (optional)")
+        print("\nAPI keys are loaded from .env file.")
+        print("Free sources: Open-Meteo")
         return 1
 
     sources = init_sources()
+
+    # Filter out excluded sources
+    if args.exclude:
+        excluded_names = {name.strip() for name in args.exclude.split(",")}
+        sources = [s for s in sources if s.name not in excluded_names]
+
+    if not sources:
+        print("Error: All sources were excluded", file=sys.stderr)
+        return 1
+
     print(f"🌍 {city} | Fetching from {len(sources)} sources...")
 
     start_time = time.perf_counter()
