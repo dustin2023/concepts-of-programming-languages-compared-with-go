@@ -32,17 +32,16 @@ func validateCityName(city string) error {
 }
 
 func main() {
-	// Load environment variables from .env file (ignore errors if file doesn't exist)
-	// use .env from parent directory
+	// Load .env from parent directory
 	_ = godotenv.Load("../.env")
 
-	// Define and parse command-line flags
+	// Parse command-line flags
 	city := flag.String("city", "", "City name (required)")
 	seq := flag.Bool("sequential", false, "Use sequential fetching for performance comparison")
 	exclude := flag.String("exclude", "", "Comma-separated source names to exclude (e.g., 'wttr.in,WeatherAPI.com')")
 	flag.Parse()
 
-	// Validate city input using dedicated validation function
+	// Validate city input
 	if err := validateCityName(*city); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Println("\nUsage: weather-aggregator --city=<city> [--sequential] [--exclude=source1,source2]")
@@ -50,17 +49,14 @@ func main() {
 		fmt.Println("  --sequential Use sequential fetching instead of concurrent (optional)")
 		fmt.Println("  --exclude    Comma-separated source names to skip (optional)")
 		fmt.Println("\nAPI keys are loaded from .env file.")
-		fmt.Println("Free sources: Open-Meteo")
 		os.Exit(1)
 	}
 
 	// Trim whitespace from city name
 	cityName := strings.TrimSpace(*city)
 
-	// Initialize all available weather sources
 	allSources := initSources()
 
-	// Filter out excluded sources
 	excludedMap := make(map[string]bool)
 	if *exclude != "" {
 		for _, name := range strings.Split(*exclude, ",") {
@@ -86,16 +82,13 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// Measure execution time
 	start := time.Now()
 	var data []WeatherData
 
 	// Choose execution strategy based on flag
 	if *seq {
-		// Sequential execution - fetches one after another (for comparison)
 		data = fetchSequential(ctx, cityName, sources)
 	} else {
-		// Concurrent execution - fetches all in parallel using goroutines
 		data = fetchWeatherConcurrently(ctx, cityName, sources)
 	}
 	duration := time.Since(start)
@@ -104,7 +97,7 @@ func main() {
 	displayResults(data)
 }
 
-// initSources creates and returns all available weather sources.
+// initSources creates all available weather sources.
 func initSources() []WeatherSource {
 	sources := []WeatherSource{&OpenMeteoSource{}}
 
@@ -123,8 +116,7 @@ func initSources() []WeatherSource {
 	return sources
 }
 
-// fetchSequential fetches weather data from all sources one by one.
-// This is used for performance comparison with concurrent fetching.
+// fetchSequential fetches weather data sequentially for performance comparison.
 func fetchSequential(ctx context.Context, city string, sources []WeatherSource) []WeatherData {
 	results := make([]WeatherData, 0, len(sources))
 	for _, s := range sources {
@@ -133,9 +125,7 @@ func fetchSequential(ctx context.Context, city string, sources []WeatherSource) 
 	return results
 }
 
-// displayResults prints individual weather data from all sources and aggregated summary.
-// Shows per-source results with emoji indicators (✅/❌), duration, and aggregated statistics.
-// Aggregation is calculated from all valid responses only.
+// displayResults prints per-source results and aggregated statistics.
 func displayResults(data []WeatherData) {
 	for _, d := range data {
 		if d.Error != nil {

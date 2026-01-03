@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,33 +26,37 @@ type WeatherCodeConfig struct {
 		Ranges []WeatherCodeRange `json:"ranges"`
 	} `json:"wmo"`
 	TomorrowIO map[string]string `json:"tomorrow_io"`
+	Conditions map[string]struct {
+		Keywords []string `json:"keywords"`
+		Emoji    string   `json:"emoji"`
+	} `json:"conditions"`
 }
 
 // WeatherCodes holds the unified weather code mappings loaded from JSON.
 var WeatherCodes WeatherCodeConfig
+var weatherCodesOnce sync.Once
+var weatherCodesErr error
 
-func init() {
-	// Load weather code mappings from shared JSON file.
-	// This is critical configuration - if it fails, the program cannot function correctly.
-	path := filepath.Join("..", "weather_codes.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "FATAL: Could not load weather_codes.json: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Program requires this file to map weather codes correctly.\n")
-		os.Exit(1)
-	}
-	if err := json.Unmarshal(data, &WeatherCodes); err != nil {
-		fmt.Fprintf(os.Stderr, "FATAL: Invalid weather_codes.json format: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Please ensure the JSON file is valid and properly formatted.\n")
-		os.Exit(1)
-	}
+// loadWeatherCodes loads weather code mappings from shared JSON file.
+// Uses sync.Once to ensure thread-safe single initialization.
+func loadWeatherCodes() error {
+	weatherCodesOnce.Do(func() {
+		path := filepath.Join("..", "weather_codes.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			weatherCodesErr = fmt.Errorf("failed to read weather_codes.json: %w", err)
+			return
+		}
+		if err := json.Unmarshal(data, &WeatherCodes); err != nil {
+			weatherCodesErr = fmt.Errorf("failed to parse weather_codes.json: %w", err)
+			return
+		}
+	})
+	return weatherCodesErr
 }
 
-// WeatherData represents the weather information from a single source.
-// Temperature is in Celsius, Humidity is a percentage (0-100).
-// Humidity pointer allows distinguishing between 0% humidity and missing humidity data.
-// Error field contains any error that occurred during fetching.
-// Duration measures the time taken to fetch from this source.
+// WeatherData represents weather from a single source.
+// Temperature in Celsius, Humidity as percentage (0-100).
 type WeatherData struct {
 	Source      string
 	Temperature float64
@@ -61,16 +66,13 @@ type WeatherData struct {
 	Duration    time.Duration
 }
 
-// WeatherSource is the interface that all weather API implementations must satisfy.
-// Each source knows how to fetch weather data for a given city.
+// WeatherSource interface - each source implements Fetch().
 type WeatherSource interface {
 	Fetch(ctx context.Context, city string) WeatherData
 	Name() string
 }
 
-// fetchWeatherConcurrently fetches weather data from all sources in parallel using goroutines.
-// It creates a buffered channel, launches a goroutine for each source, and collects results.
-// This demonstrates Go's concurrency model with goroutines and channels.
+// fetchWeatherConcurrently fetches from all sources in parallel using goroutines.
 func fetchWeatherConcurrently(ctx context.Context, city string, sources []WeatherSource) []WeatherData {
 	ch := make(chan WeatherData, len(sources))
 	for _, s := range sources {
@@ -83,15 +85,12 @@ func fetchWeatherConcurrently(ctx context.Context, city string, sources []Weathe
 	return results
 }
 
-// client is a shared HTTP client with a 10-second timeout for all API requests.
-// Using a shared client improves performance through connection reuse.
-// Go's DefaultTransport already has sensible defaults for connection pooling.
+// client is a shared HTTP client with 10s timeout.
 var client = &http.Client{
 	Timeout: 10 * time.Second,
 }
 
-// doGet creates a request with context, sets a simple UA, checks non-200 early, and returns the response.
-// Returns the response and duration of the entire request.
+// doGet creates request with context and returns response + duration.
 func doGet(ctx context.Context, url string) (*http.Response, time.Duration, error) {
 	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -117,7 +116,7 @@ func lookupLatLon(ctx context.Context, city string) (float64, float64, error) {
 	geoURL := fmt.Sprintf("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1", url.QueryEscape(city))
 	resp, _, err := doGet(ctx, geoURL)
 	if err != nil {
-		return 0, 0, fmt.Errorf("geocoding: %w", err)
+		return 0, 0, fmt.Errorf("geocoding request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -128,10 +127,10 @@ func lookupLatLon(ctx context.Context, city string) (float64, float64, error) {
 		} `json:"results"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&geo); err != nil {
-		return 0, 0, fmt.Errorf("decode geo: %w", err)
+		return 0, 0, fmt.Errorf("failed to decode geocoding response: %w", err)
 	}
 	if len(geo.Results) == 0 {
-		return 0, 0, fmt.Errorf("city not found")
+		return 0, 0, fmt.Errorf("city %q not found", city)
 	}
 	return geo.Results[0].Lat, geo.Results[0].Lon, nil
 }
@@ -141,14 +140,20 @@ func lookupLatLon(ctx context.Context, city string) (float64, float64, error) {
 // Free sources: Open-Meteo
 // API key required: WeatherAPI.com, Weatherstack, Meteosource, Pirate Weather, Tomorrow.io
 
-// OpenMeteoSource fetches weather from Open-Meteo API (free, no key required).
-// Uses geocoding API to convert city name to coordinates, then fetches weather.
+// OpenMeteoSource - free API, no key required.
 type OpenMeteoSource struct{}
 
 func (o *OpenMeteoSource) Name() string { return "Open-Meteo" }
 func (o *OpenMeteoSource) Fetch(ctx context.Context, city string) WeatherData {
 	start := time.Now()
 	res := WeatherData{Source: o.Name()}
+
+	// Ensure weather codes are loaded
+	if err := loadWeatherCodes(); err != nil {
+		res.Error = fmt.Errorf("configuration error: %w", err)
+		res.Duration = time.Since(start)
+		return res
+	}
 
 	lat, lon, err := lookupLatLon(ctx, city)
 	if err != nil {
@@ -160,7 +165,7 @@ func (o *OpenMeteoSource) Fetch(ctx context.Context, city string) WeatherData {
 	weatherURL := fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,relative_humidity_2m,weather_code", lat, lon)
 	resp, _, err := doGet(ctx, weatherURL)
 	if err != nil {
-		res.Error = fmt.Errorf("weather: %w", err)
+		res.Error = fmt.Errorf("weather request failed: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -174,7 +179,7 @@ func (o *OpenMeteoSource) Fetch(ctx context.Context, city string) WeatherData {
 		}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		res.Error = fmt.Errorf("decode weather: %w", err)
+		res.Error = fmt.Errorf("failed to decode weather response: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -186,7 +191,7 @@ func (o *OpenMeteoSource) Fetch(ctx context.Context, city string) WeatherData {
 	return res
 }
 
-// mapWMOCode converts WMO weather codes to human-readable condition strings using range-based mapping.
+// mapWMOCode converts WMO codes to readable conditions.
 func mapWMOCode(code int) string {
 	for _, r := range WeatherCodes.WMO.Ranges {
 		if code >= r.Min && code <= r.Max {
@@ -196,7 +201,7 @@ func mapWMOCode(code int) string {
 	return "Unknown"
 }
 
-// mapTomorrowCode converts Tomorrow.io weather codes to human-readable condition strings.
+// mapTomorrowCode converts Tomorrow.io codes to readable conditions.
 func mapTomorrowCode(code int) string {
 	if condition := WeatherCodes.TomorrowIO[fmt.Sprintf("%d", code)]; condition != "" {
 		return condition
@@ -204,8 +209,7 @@ func mapTomorrowCode(code int) string {
 	return "Unknown"
 }
 
-// TomorrowIOSource fetches weather from Tomorrow.io API (requires API key).
-// Returns data in JSON format with temperature, humidity, and weather description.
+// TomorrowIOSource - requires API key, coordinate-based.
 type TomorrowIOSource struct {
 	apiKey string
 }
@@ -215,9 +219,15 @@ func (t *TomorrowIOSource) Fetch(ctx context.Context, city string) WeatherData {
 	start := time.Now()
 	res := WeatherData{Source: t.Name()}
 
+	if t.apiKey == "" {
+		res.Error = fmt.Errorf("API key required")
+		res.Duration = time.Since(start)
+		return res
+	}
+
 	lat, lon, err := lookupLatLon(ctx, city)
 	if err != nil {
-		res.Error = fmt.Errorf("geocoding: %w", err)
+		res.Error = err
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -225,7 +235,7 @@ func (t *TomorrowIOSource) Fetch(ctx context.Context, city string) WeatherData {
 	url := fmt.Sprintf("https://api.tomorrow.io/v4/weather/realtime?location=%.4f,%.4f&apikey=%s", lat, lon, t.apiKey)
 	resp, _, err := doGet(ctx, url)
 	if err != nil {
-		res.Error = err
+		res.Error = fmt.Errorf("weather request failed: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -241,7 +251,7 @@ func (t *TomorrowIOSource) Fetch(ctx context.Context, city string) WeatherData {
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		res.Error = fmt.Errorf("decode: %w", err)
+		res.Error = fmt.Errorf("failed to decode response: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -254,8 +264,7 @@ func (t *TomorrowIOSource) Fetch(ctx context.Context, city string) WeatherData {
 	return res
 }
 
-// WeatherAPISource fetches weather from WeatherAPI.com (requires API key).
-// Provides current temperature, humidity, and detailed weather condition text.
+// WeatherAPISource - requires API key.
 type WeatherAPISource struct{ key string }
 
 func (w *WeatherAPISource) Name() string { return "WeatherAPI.com" }
@@ -269,7 +278,7 @@ func (w *WeatherAPISource) Fetch(ctx context.Context, city string) WeatherData {
 	}
 	resp, _, err := doGet(ctx, fmt.Sprintf("https://api.weatherapi.com/v1/current.json?key=%s&q=%s", w.key, url.QueryEscape(city)))
 	if err != nil {
-		res.Error = err
+		res.Error = fmt.Errorf("weather request failed: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -284,7 +293,7 @@ func (w *WeatherAPISource) Fetch(ctx context.Context, city string) WeatherData {
 		} `json:"current"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		res.Error = err
+		res.Error = fmt.Errorf("failed to decode response: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -296,8 +305,7 @@ func (w *WeatherAPISource) Fetch(ctx context.Context, city string) WeatherData {
 	return res
 }
 
-// WeatherstackSource fetches weather from Weatherstack API (requires API key).
-// Note: Free tier uses HTTP (not HTTPS).
+// WeatherstackSource - requires API key, HTTP only on free tier.
 type WeatherstackSource struct{ key string }
 
 func (w *WeatherstackSource) Name() string { return "Weatherstack" }
@@ -311,7 +319,7 @@ func (w *WeatherstackSource) Fetch(ctx context.Context, city string) WeatherData
 	}
 	resp, _, err := doGet(ctx, fmt.Sprintf("http://api.weatherstack.com/current?access_key=%s&query=%s", w.key, url.QueryEscape(city)))
 	if err != nil {
-		res.Error = err
+		res.Error = fmt.Errorf("weather request failed: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -324,7 +332,7 @@ func (w *WeatherstackSource) Fetch(ctx context.Context, city string) WeatherData
 		} `json:"current"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		res.Error = err
+		res.Error = fmt.Errorf("failed to decode response: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -338,8 +346,7 @@ func (w *WeatherstackSource) Fetch(ctx context.Context, city string) WeatherData
 	return res
 }
 
-// MeteosourceSource fetches weather from Meteosource API (requires API key).
-// Free tier may not include humidity data in all responses.
+// MeteosourceSource - requires API key, may lack humidity on free tier.
 type MeteosourceSource struct{ key string }
 
 func (m *MeteosourceSource) Name() string { return "Meteosource" }
@@ -353,7 +360,7 @@ func (m *MeteosourceSource) Fetch(ctx context.Context, city string) WeatherData 
 	}
 	resp, _, err := doGet(ctx, fmt.Sprintf("https://www.meteosource.com/api/v1/free/point?place_id=%s&sections=current&language=en&units=metric&key=%s", url.QueryEscape(city), m.key))
 	if err != nil {
-		res.Error = err
+		res.Error = fmt.Errorf("weather request failed: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -366,7 +373,7 @@ func (m *MeteosourceSource) Fetch(ctx context.Context, city string) WeatherData 
 		} `json:"current"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		res.Error = err
+		res.Error = fmt.Errorf("failed to decode response: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -382,8 +389,7 @@ func (m *MeteosourceSource) Fetch(ctx context.Context, city string) WeatherData 
 	return res
 }
 
-// PirateWeatherSource fetches weather from Pirate Weather API (requires API key).
-// Compatible with Dark Sky API format, uses geocoding for city lookup.
+// PirateWeatherSource - Dark Sky compatible, requires API key.
 type PirateWeatherSource struct{ key string }
 
 func (p *PirateWeatherSource) Name() string { return "Pirate Weather" }
@@ -404,7 +410,7 @@ func (p *PirateWeatherSource) Fetch(ctx context.Context, city string) WeatherDat
 	}
 	resp, _, err := doGet(ctx, fmt.Sprintf("https://api.pirateweather.net/forecast/%s/%.4f,%.4f?units=si", p.key, lat, lon))
 	if err != nil {
-		res.Error = fmt.Errorf("weather: %w", err)
+		res.Error = fmt.Errorf("weather request failed: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -417,7 +423,7 @@ func (p *PirateWeatherSource) Fetch(ctx context.Context, city string) WeatherDat
 		} `json:"currently"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		res.Error = fmt.Errorf("decode weather: %w", err)
+		res.Error = fmt.Errorf("failed to decode response: %w", err)
 		res.Duration = time.Since(start)
 		return res
 	}
@@ -431,10 +437,7 @@ func (p *PirateWeatherSource) Fetch(ctx context.Context, city string) WeatherDat
 
 // ========== Aggregation Functions ==========
 
-// AggregateWeather calculates average temperature, humidity, and consensus condition.
-// Only processes WeatherData entries with no errors (valid == number of successful responses).
-// Returns averaged values and the most common normalized weather condition.
-// Humidity average only includes sources that provided humidity data (non-nil pointers).
+// AggregateWeather calculates avg temp/humidity and consensus condition from valid data.
 func AggregateWeather(data []WeatherData) (avgTemp, avgHum float64, cond string, valid int) {
 	if len(data) == 0 {
 		return 0, 0, "No data", 0
@@ -474,24 +477,11 @@ func AggregateWeather(data []WeatherData) (avgTemp, avgHum float64, cond string,
 	return
 }
 
-// ConditionInfo maps normalized conditions to keywords and emoji for consistent handling.
-var ConditionInfo = map[string]struct{ keywords []string; emoji string }{
-	"Clear":         {[]string{"clear", "sunny"}, "☀️"},
-	"Partly Cloudy": {[]string{"partly"}, "⛅"},
-	"Cloudy":        {[]string{"cloud", "overcast"}, "☁️"},
-	"Rainy":         {[]string{"rain", "drizzle"}, "🌧️"},
-	"Snowy":         {[]string{"snow", "sleet"}, "❄️"},
-	"Foggy":         {[]string{"fog", "mist"}, "🌫️"},
-	"Stormy":        {[]string{"storm", "thunder"}, "⛈️"},
-}
-
-// normalizeCondition converts various weather condition strings to standard categories.
-// Helps aggregate similar conditions from different APIs (e.g., "Sunny" and "Clear" → "Clear").
-// Uses a map-based approach for consistency with Python implementation.
+// normalizeCondition converts conditions to standard categories.
 func normalizeCondition(c string) string {
 	lower := strings.ToLower(c)
-	for normalized, info := range ConditionInfo {
-		for _, keyword := range info.keywords {
+	for normalized, info := range WeatherCodes.Conditions {
+		for _, keyword := range info.Keywords {
 			if strings.Contains(lower, keyword) {
 				return normalized
 			}
@@ -500,15 +490,13 @@ func normalizeCondition(c string) string {
 	return c
 }
 
-// GetConditionEmoji maps weather conditions to appropriate emoji for better visualization.
-// Uses the shared ConditionInfo map for consistency. Returns a default thermometer emoji
-// if the condition doesn't match any known categories.
+// GetConditionEmoji maps conditions to emoji. Returns thermometer if no match.
 func GetConditionEmoji(c string) string {
 	lower := strings.ToLower(c)
-	for _, info := range ConditionInfo {
-		for _, keyword := range info.keywords {
+	for _, info := range WeatherCodes.Conditions {
+		for _, keyword := range info.Keywords {
 			if strings.Contains(lower, keyword) {
-				return info.emoji
+				return info.Emoji
 			}
 		}
 	}

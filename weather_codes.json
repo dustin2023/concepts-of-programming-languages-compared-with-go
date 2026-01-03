@@ -1,14 +1,14 @@
 {
   "wmo": {
     "ranges": [
-      {"min": 0, "max": 0, "condition": "Clear"},
-      {"min": 1, "max": 3, "condition": "Partly Cloudy"},
-      {"min": 4, "max": 44, "condition": "Cloudy"},
-      {"min": 45, "max": 48, "condition": "Foggy"},
-      {"min": 49, "max": 67, "condition": "Rainy"},
-      {"min": 68, "max": 79, "condition": "Snowy"},
-      {"min": 80, "max": 89, "condition": "Rainy"},
-      {"min": 90, "max": 99, "condition": "Stormy"}
+      { "min": 0, "max": 0, "condition": "Clear" },
+      { "min": 1, "max": 3, "condition": "Partly Cloudy" },
+      { "min": 4, "max": 44, "condition": "Cloudy" },
+      { "min": 45, "max": 48, "condition": "Foggy" },
+      { "min": 49, "max": 67, "condition": "Rainy" },
+      { "min": 68, "max": 79, "condition": "Snowy" },
+      { "min": 80, "max": 89, "condition": "Rainy" },
+      { "min": 90, "max": 99, "condition": "Stormy" }
     ]
   },
   "tomorrow_io": {
@@ -36,5 +36,35 @@
     "7101": "Snowy",
     "7102": "Snowy",
     "8000": "Stormy"
+  },
+  "conditions": {
+    "Clear": {
+      "keywords": ["clear", "sunny"],
+      "emoji": "☀️"
+    },
+    "Partly Cloudy": {
+      "keywords": ["partly"],
+      "emoji": "⛅"
+    },
+    "Cloudy": {
+      "keywords": ["cloud", "overcast"],
+      "emoji": "☁️"
+    },
+    "Rainy": {
+      "keywords": ["rain", "drizzle"],
+      "emoji": "🌧️"
+    },
+    "Snowy": {
+      "keywords": ["snow", "sleet"],
+      "emoji": "❄️"
+    },
+    "Foggy": {
+      "keywords": ["fog", "mist"],
+      "emoji": "🌫️"
+    },
+    "Stormy": {
+      "keywords": ["storm", "thunder"],
+      "emoji": "⛈️"
+    }
   }
 }

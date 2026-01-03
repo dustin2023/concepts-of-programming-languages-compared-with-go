@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Weather Data Aggregator - CLI Entry Point
-
-Demonstrates Python's asyncio for concurrent API calls.
-Compares sequential vs concurrent performance.
-"""
+"""Weather Data Aggregator - Async API fetching demo."""
 
 import argparse
 import asyncio
@@ -30,32 +26,9 @@ from weather import (
     MAX_CITY_NAME_LENGTH,
 )
 
-# Error message formatting for better UX
-ERROR_MESSAGES = {
-    "timeout": "⏱️  Request timeout",
-    "HTTP 400": "⚠️  Bad request",
-    "HTTP 429": "🚫 Rate limit exceeded",
-    "HTTP 401": "🔑 Authentication failed",
-    "HTTP 403": "🔒 Access forbidden",
-    "HTTP 404": "❓ Resource not found",
-    "HTTP 500": "⚠️  Server error",
-    "HTTP 503": "🔧 Service unavailable",
-    "network error": "🌐 Network connection failed",
-    "invalid JSON": "📄 Invalid response format",
-    "city not found": "🗺️  City not found",
-}
-
-
-def format_error(error: str) -> str:
-    """Format error message with emoji and human-readable text."""
-    for key, message in ERROR_MESSAGES.items():
-        if key in error:
-            return message
-    return f"⚠️  {error}"
-
 
 def validate_city_name(city: str) -> Optional[str]:
-    """Validate and sanitize city name input."""
+    """Validate city name (letters, spaces, hyphens, periods, max 100 chars)."""
     city = city.strip()
 
     if not city:
@@ -72,10 +45,8 @@ def validate_city_name(city: str) -> Optional[str]:
 
 
 def init_sources() -> list:
-    """Initialize all available weather sources."""
-    sources = [
-        OpenMeteoSource(),
-    ]
+    """Initialize weather sources (free + API-key sources if configured)."""
+    sources = [OpenMeteoSource()]
 
     # Add API-key sources if keys are available
     if key := os.getenv("TOMORROW_API_KEY"):
@@ -97,12 +68,11 @@ def init_sources() -> list:
 
 
 def display_results(data: List[WeatherData]) -> None:
-    """Display individual results and aggregated summary."""
+    """Display per-source results and aggregated statistics."""
     for d in data:
         duration_str = f" ({d.duration_ms:.0f}ms)" if d.duration_ms else ""
         if d.error:
-            error_msg = format_error(d.error)
-            print(f"❌ {d.source + ':':<18} {error_msg}{duration_str}")
+            print(f"❌ {d.source + ':':<18} ⚠️  {d.error}{duration_str}")
         else:
             hum_str = f"{d.humidity:.0f}%" if d.humidity is not None else "N/A"
             print(
@@ -130,19 +100,11 @@ def display_results(data: List[WeatherData]) -> None:
 async def main() -> int:
     load_dotenv()
 
-    parser = argparse.ArgumentParser(
-        description="Weather Data Aggregator - Fetches weather from multiple APIs",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Examples:\n  python main.py --city Munich\n  python main.py --city 'New York' --sequential",
-    )
-    parser.add_argument("--city", required=True, help="City name (required)")
+    parser = argparse.ArgumentParser(description="Weather Data Aggregator")
+    parser.add_argument("--city", required=True, help="City name")
+    parser.add_argument("--sequential", action="store_true", help="Sequential fetching")
     parser.add_argument(
-        "--sequential", action="store_true", help="Use sequential fetching"
-    )
-    parser.add_argument(
-        "--exclude",
-        default="",
-        help="Comma-separated source names to exclude (e.g., 'wttr.in,WeatherAPI.com')",
+        "--exclude", default="", help="Exclude sources (comma-separated)"
     )
 
     args = parser.parse_args()
@@ -160,7 +122,6 @@ async def main() -> int:
         print("  --sequential Use sequential fetching instead of concurrent (optional)")
         print("  --exclude    Comma-separated source names to skip (optional)")
         print("\nAPI keys are loaded from .env file.")
-        print("Free sources: Open-Meteo")
         return 1
 
     sources = init_sources()

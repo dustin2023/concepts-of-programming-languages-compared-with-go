@@ -1,8 +1,4 @@
-"""Weather Data Aggregator - Core Module
-
-Demonstrates Python's asyncio for concurrent API calls.
-Comparable to Go's goroutines and channels implementation.
-"""
+"""Weather Data Aggregator - Async API fetching with Python asyncio."""
 
 import asyncio
 import aiohttp
@@ -10,22 +6,43 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Protocol
+from typing import List, Dict, Optional, Protocol
 from urllib.parse import quote
 
 # Configuration Constants
 MAX_CITY_NAME_LENGTH = 100
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10)
 
-# Load weather code mappings from shared JSON file
+
+# Custom Exceptions
+class WeatherError(Exception):
+    """Base exception for weather-related errors."""
+
+    pass
+
+
+class GeocodingError(WeatherError):
+    """Raised when city geocoding fails."""
+
+    pass
+
+
+class APIError(WeatherError):
+    """Raised when API request fails."""
+
+    pass
+
+
+# Load weather code mappings and condition info from shared JSON file
 _WEATHER_CODES_PATH = Path(__file__).parent.parent / "weather_codes.json"
 with open(_WEATHER_CODES_PATH) as f:
     _WEATHER_CODES = json.load(f)
+    _CONDITIONS = _WEATHER_CODES.get("conditions", {})
 
 
 @dataclass
 class WeatherData:
-    """Weather information from a single source."""
+    """Weather from a single source with temperature, humidity, condition."""
 
     source: str
     temperature: float = 0.0
@@ -36,7 +53,7 @@ class WeatherData:
 
 
 class WeatherSource(Protocol):
-    """Protocol for weather source implementations."""
+    """Weather source interface - implements fetch(city, session, coords_cache)."""
 
     name: str
 
@@ -44,79 +61,80 @@ class WeatherSource(Protocol):
         self,
         city: str,
         session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
+        coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData: ...
 
 
-def safe_float(value, default: float = 0.0) -> float:
-    """Safely convert a value to float, returning a default on any error.
-
-    Handles None, non-numeric strings, and type mismatches gracefully.
-    """
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except (ValueError, TypeError):
-        return default
-
-
-async def http_get_json(
-    url: str, session: aiohttp.ClientSession
-) -> Tuple[Optional[dict], Optional[str]]:
-    """Perform HTTP GET request and return parsed JSON response.
+async def http_get_json(url: str, session: aiohttp.ClientSession) -> dict:
+    """HTTP GET returning JSON data. Raises APIError on failure.
 
     Args:
-        url: The URL to fetch
-        session: aiohttp ClientSession with timeout configured
+        url: URL to fetch
+        session: aiohttp client session
 
     Returns:
-        Tuple of (parsed_json, error_string). If successful, error is None.
-        Returns (None, error_string) on any failure.
+        Parsed JSON response as dictionary
+
+    Raises:
+        APIError: If request fails (timeout, network, HTTP error, invalid JSON)
     """
     try:
         async with session.get(url) as resp:
             if resp.status != 200:
-                return None, f"HTTP {resp.status}"
-            return await resp.json(), None
+                raise APIError(f"HTTP {resp.status}")
+            return await resp.json()
     except asyncio.TimeoutError:
-        return None, "timeout"
+        raise APIError("timeout")
     except aiohttp.ClientConnectorError as e:
-        return None, f"connection failed: {str(e)}"
+        raise APIError(f"connection failed: {str(e)}")
     except aiohttp.ServerTimeoutError:
-        return None, "server timeout"
+        raise APIError("server timeout")
     except aiohttp.ClientError as e:
-        return None, f"network error: {type(e).__name__}"
-    except ValueError:
-        return None, "invalid JSON"
-    except Exception as e:
-        return None, f"error: {type(e).__name__}"
+        raise APIError(f"network error: {type(e).__name__}")
+    except ValueError as e:
+        raise APIError(f"invalid JSON: {str(e)}")
 
 
 async def geocode_city(
     city: str, session: aiohttp.ClientSession
-) -> Tuple[Optional[Tuple[float, float]], Optional[str]]:
-    """Resolve city name to (lat, lon) coordinates."""
-    url = f"https://geocoding-api.open-meteo.com/v1/search?name={quote(city)}&count=1"
-    data, err = await http_get_json(url, session)
+) -> tuple[float, float]:
+    """Resolve city name to (lat, lon) using Open-Meteo geocoding API.
 
-    if err:
-        return None, err
+    Args:
+        city: City name to geocode
+        session: aiohttp client session
+
+    Returns:
+        Tuple of (latitude, longitude)
+
+    Raises:
+        GeocodingError: If geocoding fails or city not found
+    """
+    url = f"https://geocoding-api.open-meteo.com/v1/search?name={quote(city)}&count=1"
+    try:
+        data = await http_get_json(url, session)
+    except APIError as e:
+        raise GeocodingError(f"geocoding request failed: {str(e)}") from e
+
     if not data or not data.get("results"):
-        return None, "city not found"
+        raise GeocodingError("city not found")
 
     result = data["results"][0]
-    return (result["latitude"], result["longitude"]), None
+    return (result["latitude"], result["longitude"])
 
 
 async def get_coordinates(
     city: str,
     session: aiohttp.ClientSession,
-    coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
-) -> Tuple[Optional[Tuple[float, float]], Optional[str]]:
-    """Get coordinates from cache or geocode."""
+    coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
+) -> tuple[float, float]:
+    """Get coords from cache or geocode if not cached.
+
+    Returns cached coordinates or performs geocoding.
+    Raises GeocodingError if geocoding fails.
+    """
     if coords_cache and city in coords_cache:
-        return coords_cache[city], None
+        return coords_cache[city]
     return await geocode_city(city, session)
 
 
@@ -126,15 +144,13 @@ class BaseAPISource:
     def __init__(self, api_key: str):
         self._api_key = api_key
 
-    def _validate_api_key(self, result: WeatherData) -> bool:
-        if not self._api_key:
-            result.error = "API key required"
-            return False
-        return True
+    def _check_api_key(self) -> Optional[str]:
+        """Check if API key is present. Returns error string if missing, None otherwise."""
+        return "API key required" if not self._api_key else None
 
 
 class OpenMeteoSource:
-    """Open-Meteo API - Free, no API key required."""
+    """Open-Meteo API - free, no key required."""
 
     name = "Open-Meteo"
 
@@ -142,36 +158,41 @@ class OpenMeteoSource:
         self,
         city: str,
         session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
+        coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
 
-        coords, err = await get_coordinates(city, session, coords_cache)
-        if err:
-            result.error = err
-            return result
+        try:
+            coords = await get_coordinates(city, session, coords_cache)
+            lat, lon = coords
 
-        lat, lon = coords
-        url = (
-            f"https://api.open-meteo.com/v1/forecast?"
-            f"latitude={lat}&longitude={lon}&"
-            f"current=temperature_2m,relative_humidity_2m,weather_code"
-        )
+            url = (
+                f"https://api.open-meteo.com/v1/forecast?"
+                f"latitude={lat}&longitude={lon}&"
+                f"current=temperature_2m,relative_humidity_2m,weather_code"
+            )
 
-        data, err = await http_get_json(url, session)
-        if err:
-            result.error = err
-            return result
+            data = await http_get_json(url, session)
+            current = data.get("current", {})
 
-        current = data.get("current", {})
-        result.temperature = safe_float(current.get("temperature_2m"))
-        result.humidity = safe_float(current.get("relative_humidity_2m"))
-        result.condition = _map_wmo_code(current.get("weather_code", 0))
+            result.temperature = float(current.get("temperature_2m", 0))
+            result.humidity = (
+                float(current.get("relative_humidity_2m"))
+                if current.get("relative_humidity_2m") is not None
+                else None
+            )
+            result.condition = _map_wmo_code(current.get("weather_code", 0))
+
+        except (GeocodingError, APIError) as e:
+            result.error = str(e)
+        except (ValueError, TypeError, KeyError) as e:
+            result.error = f"data parsing error: {str(e)}"
+
         return result
 
 
 class TomorrowIOSource(BaseAPISource):
-    """Tomorrow.io API - Requires API key. Global weather data with coordinates."""
+    """Tomorrow.io API - requires key, coordinate-based."""
 
     name = "Tomorrow.io"
 
@@ -179,40 +200,43 @@ class TomorrowIOSource(BaseAPISource):
         self,
         city: str,
         session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
+        coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
-
-        if not self._validate_api_key(result):
+        if error := self._check_api_key():
+            result.error = error
             return result
 
-        coords, err = await get_coordinates(city, session, coords_cache)
-        if err:
-            result.error = err
-            return result
+        try:
+            coords = await get_coordinates(city, session, coords_cache)
+            lat, lon = coords
 
-        lat, lon = coords
-        url = f"https://api.tomorrow.io/v4/weather/realtime?location={lat},{lon}&apikey={self._api_key}"
-        data, err = await http_get_json(url, session)
-        if err:
-            result.error = err
-            return result
+            url = f"https://api.tomorrow.io/v4/weather/realtime?location={lat},{lon}&apikey={self._api_key}"
+            data = await http_get_json(url, session)
 
-        # Extract nested data safely - .get() handles missing keys gracefully
-        data_obj = data.get("data", {})
-        values = data_obj.get("values", {})
+            data_obj = data.get("data", {})
+            values = data_obj.get("values", {})
 
-        result.temperature = safe_float(values.get("temperature"))
-        result.humidity = safe_float(values.get("humidity"))
-        result.condition = values.get("weatherCode", "")
-        if result.condition:
-            result.condition = _map_tomorrow_code(result.condition)
+            result.temperature = float(values.get("temperature", 0))
+            result.humidity = (
+                float(values.get("humidity"))
+                if values.get("humidity") is not None
+                else None
+            )
+            result.condition = values.get("weatherCode", "")
+            if result.condition:
+                result.condition = _map_tomorrow_code(result.condition)
+
+        except (GeocodingError, APIError) as e:
+            result.error = str(e)
+        except (ValueError, TypeError, KeyError) as e:
+            result.error = f"data parsing error: {str(e)}"
 
         return result
 
 
 class WeatherAPISource(BaseAPISource):
-    """WeatherAPI.com - Requires API key."""
+    """WeatherAPI.com - requires key."""
 
     name = "WeatherAPI.com"
 
@@ -220,28 +244,36 @@ class WeatherAPISource(BaseAPISource):
         self,
         city: str,
         session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
+        coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
-
-        if not self._validate_api_key(result):
+        if error := self._check_api_key():
+            result.error = error
             return result
 
-        url = f"https://api.weatherapi.com/v1/current.json?key={self._api_key}&q={quote(city)}"
-        data, err = await http_get_json(url, session)
-        if err:
-            result.error = err
-            return result
+        try:
+            url = f"https://api.weatherapi.com/v1/current.json?key={self._api_key}&q={quote(city)}"
+            data = await http_get_json(url, session)
 
-        current = data.get("current", {})
-        result.temperature = safe_float(current.get("temp_c"))
-        result.humidity = safe_float(current.get("humidity"))
-        result.condition = current.get("condition", {}).get("text", "")
+            current = data.get("current", {})
+            result.temperature = float(current.get("temp_c", 0))
+            result.humidity = (
+                float(current.get("humidity"))
+                if current.get("humidity") is not None
+                else None
+            )
+            result.condition = current.get("condition", {}).get("text", "")
+
+        except APIError as e:
+            result.error = str(e)
+        except (ValueError, TypeError, KeyError) as e:
+            result.error = f"data parsing error: {str(e)}"
+
         return result
 
 
 class WeatherstackSource(BaseAPISource):
-    """Weatherstack API - Requires API key. Free tier uses HTTP only."""
+    """Weatherstack API - requires key, HTTP only on free tier."""
 
     name = "Weatherstack"
 
@@ -249,32 +281,38 @@ class WeatherstackSource(BaseAPISource):
         self,
         city: str,
         session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
+        coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
-
-        if not self._validate_api_key(result):
+        if error := self._check_api_key():
+            result.error = error
             return result
 
-        url = f"http://api.weatherstack.com/current?access_key={self._api_key}&query={quote(city)}"
-        data, err = await http_get_json(url, session)
-        if err:
-            result.error = err
-            return result
+        try:
+            url = f"http://api.weatherstack.com/current?access_key={self._api_key}&query={quote(city)}"
+            data = await http_get_json(url, session)
 
-        current = data.get("current", {})
-        result.temperature = safe_float(current.get("temperature"))
-        result.humidity = safe_float(current.get("humidity"))
+            current = data.get("current", {})
+            result.temperature = float(current.get("temperature", 0))
+            result.humidity = (
+                float(current.get("humidity"))
+                if current.get("humidity") is not None
+                else None
+            )
+            descriptions = current.get("weather_descriptions", [])
+            if descriptions:
+                result.condition = descriptions[0]
 
-        descriptions = current.get("weather_descriptions", [])
-        if descriptions:
-            result.condition = descriptions[0]
+        except APIError as e:
+            result.error = str(e)
+        except (ValueError, TypeError, KeyError) as e:
+            result.error = f"data parsing error: {str(e)}"
 
         return result
 
 
 class MeteosourceSource(BaseAPISource):
-    """Meteosource API - Requires API key. Free tier may lack humidity."""
+    """Meteosource API - requires key, may lack humidity on free tier."""
 
     name = "Meteosource"
 
@@ -282,43 +320,43 @@ class MeteosourceSource(BaseAPISource):
         self,
         city: str,
         session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
+        coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
-
-        if not self._validate_api_key(result):
+        if error := self._check_api_key():
+            result.error = error
             return result
 
-        coords, err = await get_coordinates(city, session, coords_cache)
-        if err:
-            result.error = err
-            return result
+        try:
+            coords = await get_coordinates(city, session, coords_cache)
+            lat, lon = coords
 
-        lat, lon = coords
-        url = (
-            f"https://www.meteosource.com/api/v1/free/point?"
-            f"lat={lat}&lon={lon}&sections=current&"
-            f"language=en&units=metric&key={self._api_key}"
-        )
-        data, err = await http_get_json(url, session)
-        if err:
-            result.error = err
-            return result
+            url = (
+                f"https://www.meteosource.com/api/v1/free/point?"
+                f"lat={lat}&lon={lon}&sections=current&"
+                f"language=en&units=metric&key={self._api_key}"
+            )
+            data = await http_get_json(url, session)
 
-        current = data.get("current", {})
-        result.temperature = safe_float(current.get("temperature"))
-        result.condition = current.get("summary", "")
+            current = data.get("current", {})
+            result.temperature = float(current.get("temperature", 0))
+            result.condition = current.get("summary", "")
+            result.humidity = (
+                float(current.get("humidity"))
+                if current.get("humidity") is not None
+                else None
+            )
 
-        # Humidity may be None in free tier
-        humidity = current.get("humidity")
-        if humidity is not None:
-            result.humidity = safe_float(humidity)
+        except (GeocodingError, APIError) as e:
+            result.error = str(e)
+        except (ValueError, TypeError, KeyError) as e:
+            result.error = f"data parsing error: {str(e)}"
 
         return result
 
 
 class PirateWeatherSource(BaseAPISource):
-    """Pirate Weather API - Dark Sky compatible, requires API key."""
+    """Pirate Weather API - Dark Sky compatible, requires key."""
 
     name = "Pirate Weather"
 
@@ -326,30 +364,34 @@ class PirateWeatherSource(BaseAPISource):
         self,
         city: str,
         session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, Tuple[float, float]]] = None,
+        coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
-
-        if not self._validate_api_key(result):
+        if error := self._check_api_key():
+            result.error = error
             return result
 
-        coords, err = await get_coordinates(city, session, coords_cache)
-        if err:
-            result.error = err
-            return result
+        try:
+            coords = await get_coordinates(city, session, coords_cache)
+            lat, lon = coords
 
-        lat, lon = coords
-        url = f"https://api.pirateweather.net/forecast/{self._api_key}/{lat},{lon}?units=si"
-        data, err = await http_get_json(url, session)
-        if err:
-            result.error = err
-            return result
+            url = f"https://api.pirateweather.net/forecast/{self._api_key}/{lat},{lon}?units=si"
+            data = await http_get_json(url, session)
 
-        currently = data.get("currently", {})
-        result.temperature = safe_float(currently.get("temperature"))
-        humidity_raw = safe_float(currently.get("humidity"))
-        result.humidity = humidity_raw * 100 if humidity_raw > 0 else 0.0
-        result.condition = currently.get("summary", "")
+            currently = data.get("currently", {})
+            result.temperature = float(currently.get("temperature", 0))
+
+            humidity_raw = currently.get("humidity")
+            result.humidity = (
+                float(humidity_raw) * 100 if humidity_raw and humidity_raw > 0 else None
+            )
+            result.condition = currently.get("summary", "")
+
+        except (GeocodingError, APIError) as e:
+            result.error = str(e)
+        except (ValueError, TypeError, KeyError) as e:
+            result.error = f"data parsing error: {str(e)}"
+
         return result
 
 
@@ -357,12 +399,9 @@ async def _fetch_with_timing(
     source: WeatherSource,
     city: str,
     session: aiohttp.ClientSession,
-    coords_cache: Dict[str, Tuple[float, float]],
+    coords_cache: Dict[str, tuple[float, float]],
 ) -> WeatherData:
-    """Fetch weather from a source and measure duration.
-    
-    Helper function used by both concurrent and sequential fetch functions.
-    """
+    """Fetch weather and measure duration."""
     start = time.perf_counter()
     result = await source.fetch(city, session, coords_cache)
     result.duration_ms = (time.perf_counter() - start) * 1000
@@ -372,14 +411,20 @@ async def _fetch_with_timing(
 async def fetch_weather_concurrently(
     city: str, sources: List[WeatherSource]
 ) -> List[WeatherData]:
-    """Fetch weather from all sources concurrently using asyncio.gather."""
-    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:       # TODO maybe create function for session creation
-        coords_cache: Dict[str, Tuple[float, float]] = {}
-        coords, err = await geocode_city(city, session)
-        if not err:
-            coords_cache[city] = coords
+    """Fetch from all sources concurrently using asyncio.gather."""
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
+        coords_cache: Dict[str, tuple[float, float]] = {}
 
-        tasks = [_fetch_with_timing(source, city, session, coords_cache) for source in sources]
+        try:
+            coords = await geocode_city(city, session)
+            coords_cache[city] = coords
+        except GeocodingError:
+            pass  # Sources will try geocoding individually
+
+        tasks = [
+            _fetch_with_timing(source, city, session, coords_cache)
+            for source in sources
+        ]
         return await asyncio.gather(*tasks)
 
 
@@ -387,17 +432,23 @@ async def fetch_weather_sequentially(
     city: str, sources: List[WeatherSource]
 ) -> List[WeatherData]:
     """Fetch weather sequentially for performance comparison."""
-    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:   # TODO maybe create function for session creation
-        coords_cache: Dict[str, Tuple[float, float]] = {}
-        coords, err = await geocode_city(city, session)
-        if not err:
-            coords_cache[city] = coords
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
+        coords_cache: Dict[str, tuple[float, float]] = {}
 
-        return [await _fetch_with_timing(source, city, session, coords_cache) for source in sources]
+        try:
+            coords = await geocode_city(city, session)
+            coords_cache[city] = coords
+        except GeocodingError:
+            pass  # Sources will try geocoding individually
+
+        return [
+            await _fetch_with_timing(source, city, session, coords_cache)
+            for source in sources
+        ]
 
 
 def aggregate_weather(data: List[WeatherData]) -> Dict:
-    """Calculate average temperature, humidity, and consensus condition."""
+    """Calculate avg temp/humidity and consensus condition from valid data."""
     result = {
         "avg_temp": 0.0,
         "avg_hum": 0.0,
@@ -437,7 +488,7 @@ def aggregate_weather(data: List[WeatherData]) -> Dict:
 
 
 def _map_wmo_code(code: int) -> str:
-    """Map WMO weather codes to readable conditions using range-based mapping."""
+    """Map WMO weather codes to readable conditions."""
     for range_def in _WEATHER_CODES["wmo"]["ranges"]:
         if range_def["min"] <= code <= range_def["max"]:
             return range_def["condition"]
@@ -445,7 +496,7 @@ def _map_wmo_code(code: int) -> str:
 
 
 def _map_tomorrow_code(code: str) -> str:
-    """Map Tomorrow.io weather codes to readable conditions using shared mapping."""
+    """Map Tomorrow.io codes to readable conditions."""
     try:
         code_str = str(int(code))
     except (ValueError, TypeError):
@@ -453,44 +504,21 @@ def _map_tomorrow_code(code: str) -> str:
     return _WEATHER_CODES["tomorrow_io"].get(code_str, "Unknown")
 
 
-# Unified condition mapping: Normalized name -> (keywords, emoji)
-CONDITION_INFO = {
-    "Clear": (["clear", "sunny"], "☀️"),
-    "Partly Cloudy": (["partly"], "⛅"),
-    "Cloudy": (["cloud", "overcast"], "☁️"),
-    "Rainy": (["rain", "drizzle"], "🌧️"),
-    "Snowy": (["snow", "sleet"], "❄️"),
-    "Foggy": (["fog", "mist"], "🌫️"),
-    "Stormy": (["storm", "thunder"], "⛈️"),
-}
-
-
 def normalize_condition(condition: str) -> str:
-    """Normalize weather conditions to standard categories.
-
-    Maps various weather descriptions to standard conditions using keyword matching.
-    Uses shared condition mappings loaded from weather_codes.json.
-    """
+    """Normalize conditions to standard categories via keyword matching."""
     lower = condition.lower()
-    for normalized, (keywords, _) in CONDITION_INFO.items():
-        if any(kw in lower for kw in keywords):
+    for normalized, info in _CONDITIONS.items():
+        if any(kw in lower for kw in info["keywords"]):
             return normalized
     return condition
 
 
 def get_condition_emoji(condition: str) -> str:
-    """Map weather condition to emoji for better visualization.
-
-    Uses the shared condition mappings from weather_codes.json to provide
-    consistent emoji representation across languages and APIs.
-    Returns a default thermometer emoji if no match is found.
-    """
+    """Map condition to emoji. Returns thermometer if no match."""
     lower = condition.lower()
-
-    for normalized, (keywords, emoji) in CONDITION_INFO.items():
+    for normalized, info in _CONDITIONS.items():
         if normalized.lower() in lower:
-            return emoji
-        if any(kw in lower for kw in keywords):
-            return emoji
-
+            return info["emoji"]
+        if any(kw in lower for kw in info["keywords"]):
+            return info["emoji"]
     return "🌡️"
