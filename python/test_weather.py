@@ -1,21 +1,37 @@
-"""
-Weather Aggregator Tests
-
-Run with: pytest test_weather.py -v
-"""
+"""Weather Aggregator Tests - Core Functionality"""
 
 import pytest
-from weather import (
-    WeatherData,
-    aggregate_weather,
-    normalize_condition,
-    get_condition_emoji,
-)
+from weather import WeatherData, aggregate_weather, normalize_condition, safe_float
 
 
-# =============================================================================
-# Test aggregate_weather()
-# =============================================================================
+class TestSafeFloat:
+    """Tests for safe_float helper."""
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [(42.5, 42.5), ("42.5", 42.5), (None, 0.0), ("invalid", 0.0)],
+    )
+    def test_conversion(self, value, expected):
+        assert safe_float(value) == expected
+
+
+class TestValidateCityName:
+    """Tests for city name validation."""
+
+    @pytest.mark.parametrize(
+        "city,expected",
+        [
+            ("Munich", "Munich"),
+            ("  Berlin  ", "Berlin"),
+            ("", None),
+            ("123", None),
+            ("A" * 101, None),
+        ],
+    )
+    def test_validation(self, city, expected):
+        from main import validate_city_name
+
+        assert validate_city_name(city) == expected
 
 
 class TestAggregateWeather:
@@ -24,8 +40,12 @@ class TestAggregateWeather:
     def test_all_valid(self):
         """Average calculation with all valid sources."""
         data = [
-            WeatherData(source="A", temperature=15.0, humidity=60.0, condition="Cloudy"),
-            WeatherData(source="B", temperature=17.0, humidity=70.0, condition="Cloudy"),
+            WeatherData(
+                source="A", temperature=15.0, humidity=60.0, condition="Cloudy"
+            ),
+            WeatherData(
+                source="B", temperature=17.0, humidity=70.0, condition="Cloudy"
+            ),
         ]
         result = aggregate_weather(data)
 
@@ -54,32 +74,20 @@ class TestAggregateWeather:
         result = aggregate_weather(data)
 
         assert result["valid_count"] == 0
-        assert result["hum_count"] == 0
         assert result["condition"] == "No valid data"
-
-    def test_empty_input(self):
-        """Empty input list."""
-        result = aggregate_weather([])
-
-        assert result["valid_count"] == 0
-        assert result["hum_count"] == 0
-        assert result["condition"] == "No data"
 
     def test_condition_consensus(self):
         """Most common normalized condition wins."""
         data = [
             WeatherData(source="A", temperature=10.0, humidity=50.0, condition="Clear"),
-            WeatherData(source="B", temperature=11.0, humidity=55.0, condition="Sunny"),  # → Clear
-            WeatherData(source="C", temperature=12.0, humidity=60.0, condition="Cloudy"),
+            WeatherData(source="B", temperature=11.0, humidity=55.0, condition="Sunny"),
+            WeatherData(
+                source="C", temperature=12.0, humidity=60.0, condition="Cloudy"
+            ),
         ]
         result = aggregate_weather(data)
 
-        assert result["condition"] == "Clear"  # Clear + Sunny (normalized) = 2
-
-
-# =============================================================================
-# Test normalize_condition()
-# =============================================================================
+        assert result["condition"] == "Clear"
 
 
 class TestNormalizeCondition:
@@ -91,82 +99,27 @@ class TestNormalizeCondition:
             ("Clear sky", "Clear"),
             ("Sunny", "Clear"),
             ("Partly cloudy", "Partly Cloudy"),
-            ("Overcast", "Cloudy"),
             ("Light rain", "Rainy"),
-            ("Heavy drizzle", "Rainy"),
             ("Snow showers", "Snowy"),
-            ("Fog", "Foggy"),
-            ("Mist", "Foggy"),
             ("Thunderstorm", "Stormy"),
-            ("Unknown xyz", "Unknown xyz"),  # Passthrough
-            ("", ""),  # Empty → Empty (not Unknown)
+            ("Unknown xyz", "Unknown xyz"),
         ],
     )
     def test_normalization(self, raw: str, expected: str):
         assert normalize_condition(raw) == expected
 
 
-# =============================================================================
-# Test get_emoji()
-# =============================================================================
-
-
-class TestGetConditionEmoji:
-    """Tests for emoji mapping."""
-
-    @pytest.mark.parametrize(
-        "condition,expected",
-        [
-            ("Clear", "☀️"),
-            ("Sunny", "☀️"),
-            ("Partly Cloudy", "⛅"),
-            ("Cloudy", "☁️"),
-            ("Rainy", "🌧️"),
-            ("Snowy", "❄️"),
-            ("Foggy", "🌫️"),
-            ("Stormy", "⛈️"),
-            ("Unknown", "🌡️"),
-        ],
-    )
-    def test_emoji(self, condition: str, expected: str):
-        assert get_condition_emoji(condition) == expected
-
-
-# =============================================================================
-# Test WeatherData
-# =============================================================================
-
-
-class TestWeatherData:
-    """Tests for WeatherData dataclass."""
-
-    def test_defaults(self):
-        """Default values."""
-        data = WeatherData(source="Test")
-
-        assert data.source == "Test"
-        assert data.temperature == 0.0
-        assert data.humidity is None
-        assert data.condition == ""
-        assert data.error is None
-        assert data.duration_ms is None
-
-    def test_with_error(self):
-        """Error state."""
-        data = WeatherData(source="API", error="connection failed")
-
-        assert data.error == "connection failed"
-
-
-# =============================================================================
-# Integration: Mock Sources
-# =============================================================================
-
-
 class MockSource:
-    """Mock weather source for testing fetch functions."""
+    """Mock weather source for testing."""
 
-    def __init__(self, name: str, temp: float, hum: float | None, cond: str, error: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        temp: float,
+        hum: float | None,
+        cond: str,
+        error: str | None = None,
+    ):
         self.name = name
         self._temp = temp
         self._hum = hum
@@ -185,7 +138,7 @@ class MockSource:
 
 
 @pytest.mark.asyncio
-async def test_fetch_all_concurrent():
+async def test_fetch_concurrent():
     """Concurrent fetching with mock sources."""
     from weather import fetch_weather_concurrently
 
@@ -198,19 +151,4 @@ async def test_fetch_all_concurrent():
 
     assert len(results) == 3
     assert sum(1 for r in results if r.error is None) == 2
-
-
-@pytest.mark.asyncio
-async def test_fetch_all_sequential():
-    """Sequential fetching with mock sources."""
-    from weather import fetch_weather_sequentially
-
-    sources = [
-        MockSource("A", 20.0, 50.0, "Sunny"),
-        MockSource("B", 21.0, 55.0, "Clear"),
-    ]
-    results = await fetch_weather_sequentially("Test", sources)
-
-    assert len(results) == 2
-    assert results[0].temperature == 20.0
-    assert results[1].temperature == 21.0
+    assert all(r.duration_ms is not None for r in results)

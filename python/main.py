@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-"""
-Weather Data Aggregator - CLI Entry Point
+"""Weather Data Aggregator - CLI Entry Point
+
 Demonstrates Python's asyncio for concurrent API calls.
-
-Usage:
-    python main.py --city Munich
-    python main.py --city Berlin --sequential
-
-Semester Project: Parallel Programming - Go & Python
+Compares sequential vs concurrent performance.
 """
 
 import argparse
@@ -32,33 +27,52 @@ from weather import (
     fetch_weather_sequentially,
     aggregate_weather,
     get_condition_emoji,
+    MAX_CITY_NAME_LENGTH,
 )
+
+# Error message formatting for better UX
+ERROR_MESSAGES = {
+    "timeout": "⏱️  Request timeout",
+    "HTTP 400": "⚠️  Bad request",
+    "HTTP 429": "🚫 Rate limit exceeded",
+    "HTTP 401": "🔑 Authentication failed",
+    "HTTP 403": "🔒 Access forbidden",
+    "HTTP 404": "❓ Resource not found",
+    "HTTP 500": "⚠️  Server error",
+    "HTTP 503": "🔧 Service unavailable",
+    "network error": "🌐 Network connection failed",
+    "invalid JSON": "📄 Invalid response format",
+    "city not found": "🗺️  City not found",
+}
+
+
+def format_error(error: str) -> str:
+    """Format error message with emoji and human-readable text."""
+    for key, message in ERROR_MESSAGES.items():
+        if key in error:
+            return message
+    return f"⚠️  {error}"
 
 
 def validate_city_name(city: str) -> Optional[str]:
     """Validate and sanitize city name input."""
     city = city.strip()
-    
+
     if not city:
         return None
-    
-    if len(city) > 100:  # Reasonable limit
+
+    if len(city) > MAX_CITY_NAME_LENGTH:
         return None
-    
-    # Allow letters, spaces, hyphens, apostrophes, periods (St. Petersburg, New York, etc.)
+
+    # Allow letters, spaces, hyphens, apostrophes, periods
     if not re.match(r"^[a-zA-Z\s\-'\.]+$", city):
         return None
-    
+
     return city
 
 
 def init_sources() -> list:
-    """
-    Initialize all available weather sources.
-    Free sources are always included.
-    API-key sources are added if keys exist in environment.
-    """
-    # Always include free sources
+    """Initialize all available weather sources."""
     sources = [
         OpenMeteoSource(),
         WttrinSource(),
@@ -82,19 +96,17 @@ def init_sources() -> list:
 
 def display_results(data: List[WeatherData]) -> None:
     """Display individual results and aggregated summary."""
-
-    # Individual results
     for d in data:
         duration_str = f" ({d.duration_ms:.0f}ms)" if d.duration_ms else ""
         if d.error:
-            print(f"❌ {d.source + ':':<18} ERROR: {d.error}{duration_str}")
+            error_msg = format_error(d.error)
+            print(f"❌ {d.source + ':':<18} {error_msg}{duration_str}")
         else:
             hum_str = f"{d.humidity:.0f}%" if d.humidity is not None else "N/A"
             print(
                 f"✅ {d.source + ':':<18} {d.temperature:.1f}°C, {hum_str} humidity, {d.condition}{duration_str}"
             )
 
-    # Aggregated results
     agg = aggregate_weather(data)
     emoji = get_condition_emoji(agg["condition"])
 
@@ -102,64 +114,50 @@ def display_results(data: List[WeatherData]) -> None:
 
     if agg["valid_count"] > 0:
         print(f"→ Avg Temperature: {agg['avg_temp']:.2f}°C")
-        
-        # Show humidity count for transparency
-        if agg['hum_count'] > 0:
-            print(f"→ Avg Humidity:    {agg['avg_hum']:.1f}% ({agg['hum_count']}/{agg['valid_count']} sources)")
+
+        if agg["hum_count"] > 0:
+            print(f"→ Avg Humidity:{agg['avg_hum']:.1f}%")
         else:
-            print(f"→ Avg Humidity:    N/A (no sources)")
-        
-        print(f"→ Consensus:       {agg['condition']} {emoji}")
+            print(f"→ Avg Humidity: N/A (no sources)")
+
+        print(f"→ Consensus: {agg['condition']} {emoji}")
     else:
         print("→ No valid data available")
 
 
 async def main() -> int:
-    """Main entry point."""
-
     load_dotenv()
 
-    # Parse command-line arguments
     parser = argparse.ArgumentParser(
         description="Weather Data Aggregator - Fetches weather from multiple APIs",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-        Examples:
-            python main.py --city Munich
-            python main.py --city "New York" --sequential
-        """,
+        epilog="Examples:\n  python main.py --city Munich\n  python main.py --city 'New York' --sequential",
     )
     parser.add_argument("--city", required=True, help="City name (required)")
     parser.add_argument(
-        "--sequential",
-        action="store_true",
-        help="Use sequential fetching for performance comparison",
+        "--sequential", action="store_true", help="Use sequential fetching"
     )
 
     args = parser.parse_args()
 
-    # Validate city input
     city = validate_city_name(args.city)
     if not city:
-        print("Error: Invalid city name. Use only letters, spaces, hyphens, and periods.", file=sys.stderr)
+        print(
+            "Error: Invalid city name. Use only letters, spaces, hyphens, and periods.",
+            file=sys.stderr,
+        )
         return 1
 
-    # Initialize sources
     sources = init_sources()
     print(f"🌍 {city} | Fetching from {len(sources)} sources...")
 
-    # Fetch weather data
     start_time = time.perf_counter()
-
-    if args.sequential:
-        data = await fetch_weather_sequentially(city, sources)
-    else:
-        data = await fetch_weather_concurrently(city, sources)
-
+    data = await (
+        fetch_weather_sequentially if args.sequential else fetch_weather_concurrently
+    )(city, sources)
     duration = time.perf_counter() - start_time
-    print(f"⏱️  Completed in {duration:.3f}s\n")
 
-    # Display results
+    print(f"⏱️  Completed in {duration:.3f}s\n")
     display_results(data)
 
     return 0
