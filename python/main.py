@@ -39,6 +39,47 @@ def validate_city_name(city: str) -> Optional[str]:
     return city
 
 
+def create_parser() -> argparse.ArgumentParser:
+    """Create and return the argument parser."""
+    parser = argparse.ArgumentParser(
+        description="Weather Data Aggregator",
+        epilog="Examples: %(prog)s --city New York   |   %(prog)s --city \"O'Brien\"",
+    )
+    parser.add_argument(
+        "--city",
+        nargs="+",
+        required=True,
+        metavar="NAME",
+        help="City name (spaces allowed, quotes optional)",
+    )
+    parser.add_argument("--sequential", action="store_true", help="Sequential fetching")
+    parser.add_argument(
+        "--exclude",
+        nargs="+",
+        default=[],
+        help="Exclude sources (comma-separated; spaces allowed without quotes)",
+    )
+    return parser
+
+
+def print_city_validation_error() -> None:
+    """Print city validation error message and usage."""
+    print(
+        "Error: Invalid city name. Use letters (including ü, é, ñ), numbers, spaces, hyphens, apostrophes, and periods.",
+        file=sys.stderr,
+    )
+    print("\nUsage: python main.py --city <city> [OPTIONS]")
+    print("\nOptions:")
+    print("  --city       City name (required, spaces allowed)")
+    print("  --sequential Use sequential fetching instead of concurrent (optional)")
+    print("  --exclude    Comma-separated source names to skip (optional)")
+    print("\nExamples:")
+    print("  ./main.py --city New York")
+    print("  ./main.py --city \"O'Brien\"   # apostrophe needs double-quotes in the shell")
+    print("  ./main.py --city Berlin --exclude WeatherAPI.com")
+    print("\nAPI keys are loaded from .env file.")
+
+
 def display_results(data: List[WeatherData]) -> None:
     """Display per-source results and aggregated statistics."""
     for d in data:
@@ -76,45 +117,12 @@ async def main() -> int:
         print(f"Error loading weather codes: {e}", file=sys.stderr)
         return 1
 
-    parser = argparse.ArgumentParser(
-        description="Weather Data Aggregator",
-        epilog="Examples: %(prog)s --city New York   |   %(prog)s --city \"O'Brien\"",
-    )
-    parser.add_argument(
-        "--city",
-        nargs="+",
-        required=True,
-        metavar="NAME",
-        help="City name (spaces allowed, quotes optional)",
-    )
-    parser.add_argument("--sequential", action="store_true", help="Sequential fetching")
-    parser.add_argument(
-        "--exclude",
-        nargs="+",
-        default=[],
-        help="Exclude sources (comma-separated; spaces allowed without quotes)",
-    )
+    args = create_parser().parse_args()
 
-    args = parser.parse_args()
-
-    # Join multi-word city names (e.g., ["New", "York"] -> "New York")
-    city_input = " ".join(args.city)
-    city = validate_city_name(city_input)
+    # Join multi-word city names
+    city = validate_city_name(" ".join(args.city))
     if not city:
-        print(
-            "Error: Invalid city name. Use letters (including ü, é, ñ), numbers, spaces, hyphens, apostrophes, and periods.",
-            file=sys.stderr,
-        )
-        print("\nUsage: python main.py --city <city> [OPTIONS]")
-        print("\nOptions:")
-        print("  --city       City name (required, spaces allowed)")
-        print("  --sequential Use sequential fetching instead of concurrent (optional)")
-        print("  --exclude    Comma-separated source names to skip (optional)")
-        print("\nExamples:")
-        print("  ./main.py --city New York")
-        print("  ./main.py --city \"O'Brien\"   # apostrophe needs double-quotes in the shell")
-        print("  ./main.py --city Berlin --exclude WeatherAPI.com")
-        print("\nAPI keys are loaded from .env file.")
+        print_city_validation_error()
         return 1
 
     sources = init_sources()

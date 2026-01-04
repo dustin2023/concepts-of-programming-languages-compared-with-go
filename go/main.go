@@ -30,6 +30,50 @@ func validateCityName(city string) (string, error) {
 	return trimmed, nil
 }
 
+// parseMultiWordArgs handles Python argparse-like behavior for multi-word arguments.
+// Collects city name parts and exclude parts from unparsed args after flag.Parse().
+func parseMultiWordArgs(cityFlag, excludeFlag string, seqFlag *bool) (city, exclude string) {
+	cityParts := []string{}
+	if cityFlag != "" {
+		cityParts = append(cityParts, cityFlag)
+	}
+
+	excludeParts := []string{}
+	if excludeFlag != "" {
+		excludeParts = append(excludeParts, excludeFlag)
+	}
+
+	args := flag.Args()
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		switch {
+		case strings.HasPrefix(arg, "--exclude="):
+			excludeParts = append(excludeParts, strings.TrimPrefix(arg, "--exclude="))
+
+		case arg == "--exclude":
+			// Collect following tokens until next flag
+			for j := i + 1; j < len(args) && !strings.HasPrefix(args[j], "--"); j++ {
+				excludeParts = append(excludeParts, args[j])
+				i = j
+			}
+
+		case strings.HasPrefix(arg, "--sequential"):
+			*seqFlag = true
+
+		case !strings.HasPrefix(arg, "-"):
+			if strings.Contains(arg, ",") {
+				excludeParts = append(excludeParts, arg)
+			} else {
+				cityParts = append(cityParts, arg)
+			}
+		}
+	}
+
+	return strings.Join(cityParts, " "), strings.Join(excludeParts, " ")
+}
+
 
 // displayResults prints per-source results and aggregated statistics.
 func displayResults(data []WeatherData) {
@@ -65,7 +109,7 @@ func displayResults(data []WeatherData) {
 func main() {
 	_ = godotenv.Load("../.env")
 
-		// Load weather code mappings once (needed for all sources)
+	// Load weather code mappings once (needed for all sources)
 	if err := loadWeatherCodes(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading weather codes: %v\n", err)
 		os.Exit(1)
@@ -77,48 +121,10 @@ func main() {
 	exclude := flag.String("exclude", "", "Comma-separated source names to exclude (e.g., 'wttr.in,WeatherAPI.com')")
 	flag.Parse()
 
-	// Collect city name parts and manually parse flags that appear after positional args
-	// This enables Python argparse-like behavior: --city New York --exclude Source
-	cityParts := []string{}
-	if *city != "" {
-		cityParts = append(cityParts, *city)
-	}
-
-	excludeParts := []string{}
-	for i := 0; i < len(flag.Args()); i++ {
-		arg := flag.Args()[i]
-
-		switch {
-		case strings.HasPrefix(arg, "--exclude="):
-			val := strings.TrimPrefix(arg, "--exclude=")
-			excludeParts = append(excludeParts, val)
-
-		case arg == "--exclude":
-			// Collect following tokens until next flag
-			for j := i + 1; j < len(flag.Args()) && !strings.HasPrefix(flag.Args()[j], "--"); j++ {
-				excludeParts = append(excludeParts, flag.Args()[j])
-				i = j
-			}
-
-		case strings.HasPrefix(arg, "--sequential"):
-			*seq = true
-
-		case !strings.HasPrefix(arg, "-"):
-			if strings.Contains(arg, ",") {
-				excludeParts = append(excludeParts, arg)
-			} else {
-				cityParts = append(cityParts, arg)
-			}
-		}
-	}
-
-	if len(excludeParts) > 0 {
-		*exclude = strings.Join(excludeParts, " ")
-	}
-	
-	if len(cityParts) > 0 {
-		*city = strings.Join(cityParts, " ")
-	}
+	// Handle multi-word arguments
+	parsedCity, parsedExclude := parseMultiWordArgs(*city, *exclude, seq)
+	*city = parsedCity
+	*exclude = parsedExclude
 
 	// Validate city input
 	cityName, err := validateCityName(*city)
