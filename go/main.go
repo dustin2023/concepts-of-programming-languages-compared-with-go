@@ -23,7 +23,6 @@ func initSources() []WeatherSource {
 
 	addSource("TOMORROW_API_KEY", func(k string) WeatherSource { return &TomorrowIOSource{apiKey: k} })
 	addSource("WEATHER_API_COM_KEY", func(k string) WeatherSource { return &WeatherAPISource{k} })
-	addSource("WEATHERSTACK_API_KEY", func(k string) WeatherSource { return &WeatherstackSource{k} })
 	addSource("METEOSOURCE_API_KEY", func(k string) WeatherSource { return &MeteosourceSource{k} })
 	addSource("PIRATE_WEATHER_API_KEY", func(k string) WeatherSource { return &PirateWeatherSource{k} })
 
@@ -98,7 +97,7 @@ func main() {
 		fmt.Println("  --exclude    Comma-separated source names to skip (optional)")
 		fmt.Println("\nExamples:")
 		fmt.Println("  ./weather-aggregator --city New York")
-		fmt.Println("  ./weather-aggregator --city Berlin --exclude Weatherstack")
+		fmt.Println("  ./weather-aggregator --city Berlin --exclude WeatherAPI.com")
 		fmt.Println("  ./weather-aggregator --city \"São Paulo\" --sequential")
 		fmt.Println("\nAPI keys are loaded from .env file.")
 		os.Exit(1)

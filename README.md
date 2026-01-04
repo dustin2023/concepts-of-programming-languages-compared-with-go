@@ -220,7 +220,7 @@ go build -o weather-aggregator
 
 # Options:
 ./weather-aggregator --city Munich --sequential  # Sequential mode
-./weather-aggregator --city London --exclude Weatherstack,Meteosource
+./weather-aggregator --city London --exclude WeatherAPI.com,Meteosource
 ```
 
 ### Running the Python Version
@@ -249,7 +249,7 @@ python main.py --city Kraków
 
 # Options:
 python main.py --city Munich --sequential
-python main.py --city London --exclude Weatherstack,Meteosource
+python main.py --city London --exclude WeatherAPI.com,Meteosource
 ```
 
 ---
@@ -388,7 +388,6 @@ The application supports 6 weather APIs with automatic fallback:
 | **Open-Meteo** | ❌ No | Unlimited | Free geocoding + weather |
 | **Tomorrow.io** | ✅ Yes | 500 calls/day | Requires coordinates |
 | **WeatherAPI.com** | ✅ Yes | 1M calls/month | Most generous free tier |
-| **Weatherstack** | ✅ Yes | 1k calls/month | HTTP only (no HTTPS) |
 | **Meteosource** | ✅ Yes | Limited | May lack humidity data |
 | **Pirate Weather** | ✅ Yes | 1k calls/month | Dark Sky compatible |
 
@@ -396,7 +395,6 @@ The application supports 6 weather APIs with automatic fallback:
 
 Get your free API keys:
 - **WeatherAPI.com**: https://www.weatherapi.com/signup.aspx
-- **Weatherstack**: https://weatherstack.com/signup/free
 - **Meteosource**: https://www.meteosource.com/client/sign-up
 - **Pirate Weather**: https://pirateweather.net/
 - **Tomorrow.io**: https://www.tomorrow.io/weather-api/
@@ -404,7 +402,6 @@ Get your free API keys:
 Add them to `.env`:
 ```bash
 WEATHER_API_COM_KEY=your_key_here
-WEATHERSTACK_API_KEY=your_key_here
 METEOSOURCE_API_KEY=your_key_here
 PIRATE_WEATHER_API_KEY=your_key_here
 TOMORROW_API_KEY=your_key_here
@@ -578,7 +575,7 @@ def test_validate_city_name(city, expected):
 2. **Limited Error Recovery**: When geocoding fails, individual sources retry independently. A shared fallback strategy would be more efficient.
 3. **Basic Aggregation**: Weather condition consensus uses simple majority voting. More sophisticated algorithms (weighted by source reliability) could improve accuracy.
 4. **No Historical Data**: Only current weather is fetched. No support for forecasts or historical trends.
-5. **Rate Limiting**: Some free-tier APIs (e.g., Weatherstack) impose strict rate limits. The application does not implement exponential backoff or retry logic.
+5. **Rate Limiting**: Some free-tier APIs (e.g., Open-Meteo) impose strict rate limits. The application does not implement exponential backoff or retry logic.
 6. **Test Coverage**: While core aggregation logic is well-tested (31-48%), HTTP error scenarios and edge cases could benefit from more comprehensive testing.
 
 ### Potential Improvements

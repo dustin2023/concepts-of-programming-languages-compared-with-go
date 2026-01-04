@@ -16,7 +16,6 @@ from weather import (
     OpenMeteoSource,
     TomorrowIOSource,
     WeatherAPISource,
-    WeatherstackSource,
     MeteosourceSource,
     PirateWeatherSource,
     fetch_weather_concurrently,
@@ -37,9 +36,6 @@ def init_sources() -> list:
 
     if key := os.getenv("WEATHER_API_COM_KEY"):
         sources.append(WeatherAPISource(key))
-
-    if key := os.getenv("WEATHERSTACK_API_KEY"):
-        sources.append(WeatherstackSource(key))
 
     if key := os.getenv("METEOSOURCE_API_KEY"):
         sources.append(MeteosourceSource(key))
@@ -134,7 +130,7 @@ async def main() -> int:
         print("  --exclude    Comma-separated source names to skip (optional)")
         print("\nExamples: --city Berlin")
         print("  ./main.py --city New York")
-        print("  ./main.py --city Berlin --exclude Weatherstack")
+        print("  ./main.py --city Berlin --exclude WeatherAPI.com")
         print("  ./main.py --city São Paulo --sequential")
         print("\nAPI keys are loaded from .env file.")
         return 1

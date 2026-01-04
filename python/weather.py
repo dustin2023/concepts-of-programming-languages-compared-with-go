@@ -278,45 +278,6 @@ class WeatherAPISource(BaseAPISource):
         return result
 
 
-class WeatherstackSource(BaseAPISource):
-    """Weatherstack API - requires key, HTTP only on free tier."""
-
-    name = "Weatherstack"
-
-    async def fetch(
-        self,
-        city: str,
-        session: aiohttp.ClientSession,
-        coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
-    ) -> WeatherData:
-        result = WeatherData(source=self.name)
-        if error := self._check_api_key():
-            result.error = error
-            return result
-
-        try:
-            url = f"http://api.weatherstack.com/current?access_key={self._api_key}&query={quote(city)}"
-            data = await http_get_json(url, session)
-
-            current = data.get("current", {})
-            result.temperature = float(current.get("temperature", 0))
-            result.humidity = (
-                float(current.get("humidity"))
-                if current.get("humidity") is not None
-                else None
-            )
-            descriptions = current.get("weather_descriptions", [])
-            if descriptions:
-                result.condition = descriptions[0]
-
-        except APIError as e:
-            result.error = str(e)
-        except (ValueError, TypeError, KeyError) as e:
-            result.error = f"data parsing error: {str(e)}"
-
-        return result
-
-
 class MeteosourceSource(BaseAPISource):
     """Meteosource API - requires key, may lack humidity on free tier."""
 
@@ -482,8 +443,7 @@ def aggregate_weather(data: List[WeatherData]) -> Dict:
     condition_counts: Dict[str, int] = {}
     for d in valid:
         normalized = normalize_condition(d.condition)
-        if normalized:
-            condition_counts[normalized] = condition_counts.get(normalized, 0) + 1
+        condition_counts[normalized] = condition_counts.get(normalized, 0) + 1
 
     if condition_counts:
         result["condition"] = max(condition_counts, key=condition_counts.get)

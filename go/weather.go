@@ -138,7 +138,7 @@ func lookupLatLon(ctx context.Context, city string) (float64, float64, error) {
 // --- Weather API Implementations ---
 // Each API source implements the WeatherSource interface.
 // Free sources: Open-Meteo
-// API key required: WeatherAPI.com, Weatherstack, Meteosource, Pirate Weather, Tomorrow.io
+// API key required: WeatherAPI.com, Meteosource, Pirate Weather, Tomorrow.io
 
 // OpenMeteoSource - free API, no key required.
 type OpenMeteoSource struct{}
@@ -286,48 +286,6 @@ func (w *WeatherAPISource) Fetch(ctx context.Context, city string, coordsCache m
 	res.Duration = time.Since(start)
 	return res
 }
-
-// WeatherstackSource - requires API key, HTTP only on free tier.
-type WeatherstackSource struct{ key string }
-
-func (w *WeatherstackSource) Name() string { return "Weatherstack" }
-func (w *WeatherstackSource) Fetch(ctx context.Context, city string, coordsCache map[string][2]float64) WeatherData {
-	start := time.Now()
-	res := WeatherData{Source: w.Name()}
-	if w.key == "" {
-		res.Error = fmt.Errorf("API key required")
-		res.Duration = time.Since(start)
-		return res
-	}
-	resp, _, err := doGet(ctx, fmt.Sprintf("http://api.weatherstack.com/current?access_key=%s&query=%s", w.key, url.QueryEscape(city)))
-	if err != nil {
-		res.Error = fmt.Errorf("weather request failed: %w", err)
-		res.Duration = time.Since(start)
-		return res
-	}
-	defer resp.Body.Close()
-	var data struct {
-		Current struct {
-			Temp float64  `json:"temperature"`
-			Hum  int      `json:"humidity"`
-			Desc []string `json:"weather_descriptions"`
-		} `json:"current"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		res.Error = fmt.Errorf("failed to decode response: %w", err)
-		res.Duration = time.Since(start)
-		return res
-	}
-	res.Temperature = data.Current.Temp
-	hum := float64(data.Current.Hum)
-	res.Humidity = &hum
-	if len(data.Current.Desc) > 0 {
-		res.Condition = data.Current.Desc[0]
-	}
-	res.Duration = time.Since(start)
-	return res
-}
-
 // MeteosourceSource - requires API key, may lack humidity on free tier.
 type MeteosourceSource struct{ key string }
 
@@ -368,10 +326,6 @@ func (m *MeteosourceSource) Fetch(ctx context.Context, city string, coordsCache 
 	res.Temperature, res.Condition = data.Current.Temp, data.Current.Summary
 	if h, ok := data.Current.Hum.(float64); ok {
 		res.Humidity = &h
-	} else if s, ok := data.Current.Hum.(string); ok {
-		var hum float64
-		fmt.Sscanf(strings.TrimSuffix(s, "%"), "%f", &hum)
-		res.Humidity = &hum
 	}
 	res.Duration = time.Since(start)
 	return res
@@ -416,8 +370,10 @@ func (p *PirateWeatherSource) Fetch(ctx context.Context, city string, coordsCach
 		return res
 	}
 	res.Temperature = data.Currently.Temp
-	hum := data.Currently.Hum * 100
-	res.Humidity = &hum
+	if data.Currently.Hum > 0 {
+		hum := data.Currently.Hum * 100
+		res.Humidity = &hum
+	}
 	res.Condition = data.Currently.Sum
 	res.Duration = time.Since(start)
 	return res
