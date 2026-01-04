@@ -8,24 +8,49 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
 	"github.com/joho/godotenv"
 )
 
-func validateCityName(city string) error {
+// initSources creates all available weather sources.
+func initSources() []WeatherSource {
+	sources := []WeatherSource{&OpenMeteoSource{}}
+
+	addSource := func(envKey string, create func(string) WeatherSource) {
+		if val := os.Getenv(envKey); val != "" {
+			sources = append(sources, create(val))
+		}
+	}
+
+	addSource("TOMORROW_API_KEY", func(k string) WeatherSource { return &TomorrowIOSource{apiKey: k} })
+	addSource("WEATHER_API_COM_KEY", func(k string) WeatherSource { return &WeatherAPISource{k} })
+	addSource("WEATHERSTACK_API_KEY", func(k string) WeatherSource { return &WeatherstackSource{k} })
+	addSource("METEOSOURCE_API_KEY", func(k string) WeatherSource { return &MeteosourceSource{k} })
+	addSource("PIRATE_WEATHER_API_KEY", func(k string) WeatherSource { return &PirateWeatherSource{k} })
+
+	return sources
+}
+
+func validateCityName(city string) (string, error) {
 	trimmed := strings.TrimSpace(city)
 	if trimmed == "" {
-		return fmt.Errorf("city name is required and cannot be empty")
+		return "", fmt.Errorf("city name is required and cannot be empty")
 	}
-	if len(city) > 100 {
-		return fmt.Errorf("city name must not exceed 100 characters")
+	// Prevent flag-like values (aligns behavior with Python CLI parsing)
+	if strings.HasPrefix(trimmed, "-") {
+		return "", fmt.Errorf("city name cannot start with '-'; did you mean to pass a flag?")
+	}
+	if len(trimmed) < 2 {
+		return "", fmt.Errorf("city name must be at least 2 characters long")
+	}
+	if len(trimmed) > 100 {
+		return "", fmt.Errorf("city name must not exceed 100 characters")
 	}
 	// Allow Unicode letters (including umlauts, accents), numbers, spaces, hyphens, apostrophes, and periods
-	matched, _ := regexp.MatchString(`^[\p{L}0-9\s\-'\.]+$`, city)
+	matched, _ := regexp.MatchString(`^[\p{L}0-9\s\-'\.]+$`, trimmed)
 	if !matched {
-		return fmt.Errorf("city name contains invalid characters. Use letters (including ü, é, ñ), numbers, spaces, hyphens, apostrophes, and periods")
+		return "", fmt.Errorf("city name contains invalid characters. Use letters (including ü, é, ñ), numbers, spaces, hyphens, apostrophes, and periods")
 	}
-	return nil
+	return trimmed, nil
 }
 
 func main() {
@@ -37,36 +62,47 @@ func main() {
 	exclude := flag.String("exclude", "", "Comma-separated source names to exclude (e.g., 'wttr.in,WeatherAPI.com')")
 	flag.Parse()
 
-	// Handle multi-word city names from remaining args (e.g., "New York")
-	// Only append args that don't look like flags (don't start with -)
-	if *city != "" && len(flag.Args()) > 0 {
-		for _, arg := range flag.Args() {
-			if !strings.HasPrefix(arg, "-") {
-				*city = *city + " " + arg
-			}
+	// Collect city name parts and manually parse flags that appear after positional args
+	// This enables Python argparse-like behavior: --city New York --exclude Source
+	cityParts := []string{}
+	if *city != "" {
+		cityParts = append(cityParts, *city)
+	}
+	
+	for i := 0; i < len(flag.Args()); i++ {
+		arg := flag.Args()[i]
+		if strings.HasPrefix(arg, "--exclude=") {
+			*exclude = strings.TrimPrefix(arg, "--exclude=")
+		} else if arg == "--exclude" && i+1 < len(flag.Args()) {
+			i++
+			*exclude = flag.Args()[i]
+		} else if strings.HasPrefix(arg, "--sequential") {
+			*seq = true
+		} else if !strings.HasPrefix(arg, "-") {
+			cityParts = append(cityParts, arg)
 		}
+	}
+	
+	if len(cityParts) > 0 {
+		*city = strings.Join(cityParts, " ")
 	}
 
 	// Validate city input
-	if err := validateCityName(*city); err != nil {
+	cityName, err := validateCityName(*city)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Println("\nUsage: weather-aggregator --city <city> [OPTIONS]")
-		fmt.Println("       weather-aggregator [OPTIONS] --city <city>")
 		fmt.Println("\nOptions:")
 		fmt.Println("  --city       City name (required)")
-		fmt.Println("               • Single word: --city Berlin")
-		fmt.Println("               • Multi-word:  --city \"New York\" (quotes recommended)")
-		fmt.Println("               • Alternative: --city=New\\ York (escape spaces)")
 		fmt.Println("  --sequential Use sequential fetching (optional)")
 		fmt.Println("  --exclude    Comma-separated source names to skip (optional)")
-		fmt.Println("\nNote: For multi-word cities, place other flags BEFORE --city,")
-		fmt.Println("      or use quotes: --sequential --city \"New York\"")
+		fmt.Println("\nExamples:")
+		fmt.Println("  ./weather-aggregator --city New York")
+		fmt.Println("  ./weather-aggregator --city Berlin --exclude Weatherstack")
+		fmt.Println("  ./weather-aggregator --city \"São Paulo\" --sequential")
 		fmt.Println("\nAPI keys are loaded from .env file.")
 		os.Exit(1)
 	}
-
-	// Trim whitespace from city name
-	cityName := strings.TrimSpace(*city)
 
 	allSources := initSources()
 
@@ -110,33 +146,6 @@ func main() {
 	displayResults(data)
 }
 
-// initSources creates all available weather sources.
-func initSources() []WeatherSource {
-	sources := []WeatherSource{&OpenMeteoSource{}}
-
-	addSource := func(envKey string, create func(string) WeatherSource) {
-		if val := os.Getenv(envKey); val != "" {
-			sources = append(sources, create(val))
-		}
-	}
-
-	addSource("TOMORROW_API_KEY", func(k string) WeatherSource { return &TomorrowIOSource{apiKey: k} })
-	addSource("WEATHER_API_COM_KEY", func(k string) WeatherSource { return &WeatherAPISource{k} })
-	addSource("WEATHERSTACK_API_KEY", func(k string) WeatherSource { return &WeatherstackSource{k} })
-	addSource("METEOSOURCE_API_KEY", func(k string) WeatherSource { return &MeteosourceSource{k} })
-	addSource("PIRATE_WEATHER_API_KEY", func(k string) WeatherSource { return &PirateWeatherSource{k} })
-
-	return sources
-}
-
-// fetchSequential fetches weather data sequentially for performance comparison.
-func fetchSequential(ctx context.Context, city string, sources []WeatherSource) []WeatherData {
-	results := make([]WeatherData, 0, len(sources))
-	for _, s := range sources {
-		results = append(results, s.Fetch(ctx, city))
-	}
-	return results
-}
 
 // displayResults prints per-source results and aggregated statistics.
 func displayResults(data []WeatherData) {

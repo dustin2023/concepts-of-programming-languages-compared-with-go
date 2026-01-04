@@ -51,7 +51,7 @@ type WeatherData struct {
 
 // WeatherSource interface - each source implements Fetch().
 type WeatherSource interface {
-	Fetch(ctx context.Context, city string) WeatherData
+	Fetch(ctx context.Context, city string, coordsCache map[string][2]float64) WeatherData
 	Name() string
 }
 
@@ -60,6 +60,25 @@ type WeatherSource interface {
 var client = &http.Client{
 	Timeout: 10 * time.Second,
 }
+
+// loadWeatherCodes loads weather code mappings from shared JSON file.
+// Uses sync.Once to ensure thread-safe single initialization.
+func loadWeatherCodes() error {
+	weatherCodesOnce.Do(func() {
+		path := filepath.Join("..", "weather_codes.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			weatherCodesErr = fmt.Errorf("failed to read weather_codes.json: %w", err)
+			return
+		}
+		if err := json.Unmarshal(data, &WeatherCodes); err != nil {
+			weatherCodesErr = fmt.Errorf("failed to parse weather_codes.json: %w", err)
+			return
+		}
+	})
+	return weatherCodesErr
+}
+
 
 // doGet creates request with context and returns response + duration.
 func doGet(ctx context.Context, url string) (*http.Response, time.Duration, error) {
@@ -80,6 +99,16 @@ func doGet(ctx context.Context, url string) (*http.Response, time.Duration, erro
 		return nil, duration, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
 	return resp, duration, nil
+}
+
+// getCoordinates gets coordinates from cache or performs geocoding.
+func getCoordinates(ctx context.Context, city string, coordsCache map[string][2]float64) (float64, float64, error) {
+	if coordsCache != nil {
+		if coords, ok := coordsCache[city]; ok {
+			return coords[0], coords[1], nil
+		}
+	}
+	return lookupLatLon(ctx, city)
 }
 
 // lookupLatLon resolves a city name to coordinates using Open-Meteo geocoding.
@@ -115,7 +144,7 @@ func lookupLatLon(ctx context.Context, city string) (float64, float64, error) {
 type OpenMeteoSource struct{}
 
 func (o *OpenMeteoSource) Name() string { return "Open-Meteo" }
-func (o *OpenMeteoSource) Fetch(ctx context.Context, city string) WeatherData {
+func (o *OpenMeteoSource) Fetch(ctx context.Context, city string, coordsCache map[string][2]float64) WeatherData {
 	start := time.Now()
 	res := WeatherData{Source: o.Name()}
 
@@ -126,7 +155,7 @@ func (o *OpenMeteoSource) Fetch(ctx context.Context, city string) WeatherData {
 		return res
 	}
 
-	lat, lon, err := lookupLatLon(ctx, city)
+	lat, lon, err := getCoordinates(ctx, city, coordsCache)
 	if err != nil {
 		res.Error = err
 		res.Duration = time.Since(start)
@@ -168,7 +197,7 @@ type TomorrowIOSource struct {
 }
 
 func (t *TomorrowIOSource) Name() string { return "Tomorrow.io" }
-func (t *TomorrowIOSource) Fetch(ctx context.Context, city string) WeatherData {
+func (t *TomorrowIOSource) Fetch(ctx context.Context, city string, coordsCache map[string][2]float64) WeatherData {
 	start := time.Now()
 	res := WeatherData{Source: t.Name()}
 
@@ -178,7 +207,7 @@ func (t *TomorrowIOSource) Fetch(ctx context.Context, city string) WeatherData {
 		return res
 	}
 
-	lat, lon, err := lookupLatLon(ctx, city)
+	lat, lon, err := getCoordinates(ctx, city, coordsCache)
 	if err != nil {
 		res.Error = err
 		res.Duration = time.Since(start)
@@ -221,7 +250,7 @@ func (t *TomorrowIOSource) Fetch(ctx context.Context, city string) WeatherData {
 type WeatherAPISource struct{ key string }
 
 func (w *WeatherAPISource) Name() string { return "WeatherAPI.com" }
-func (w *WeatherAPISource) Fetch(ctx context.Context, city string) WeatherData {
+func (w *WeatherAPISource) Fetch(ctx context.Context, city string, coordsCache map[string][2]float64) WeatherData {
 	start := time.Now()
 	res := WeatherData{Source: w.Name()}
 	if w.key == "" {
@@ -262,7 +291,7 @@ func (w *WeatherAPISource) Fetch(ctx context.Context, city string) WeatherData {
 type WeatherstackSource struct{ key string }
 
 func (w *WeatherstackSource) Name() string { return "Weatherstack" }
-func (w *WeatherstackSource) Fetch(ctx context.Context, city string) WeatherData {
+func (w *WeatherstackSource) Fetch(ctx context.Context, city string, coordsCache map[string][2]float64) WeatherData {
 	start := time.Now()
 	res := WeatherData{Source: w.Name()}
 	if w.key == "" {
@@ -303,7 +332,7 @@ func (w *WeatherstackSource) Fetch(ctx context.Context, city string) WeatherData
 type MeteosourceSource struct{ key string }
 
 func (m *MeteosourceSource) Name() string { return "Meteosource" }
-func (m *MeteosourceSource) Fetch(ctx context.Context, city string) WeatherData {
+func (m *MeteosourceSource) Fetch(ctx context.Context, city string, coordsCache map[string][2]float64) WeatherData {
 	start := time.Now()
 	res := WeatherData{Source: m.Name()}
 	if m.key == "" {
@@ -311,7 +340,13 @@ func (m *MeteosourceSource) Fetch(ctx context.Context, city string) WeatherData 
 		res.Duration = time.Since(start)
 		return res
 	}
-	resp, _, err := doGet(ctx, fmt.Sprintf("https://www.meteosource.com/api/v1/free/point?place_id=%s&sections=current&language=en&units=metric&key=%s", url.QueryEscape(city), m.key))
+	lat, lon, err := getCoordinates(ctx, city, coordsCache)
+	if err != nil {
+		res.Error = err
+		res.Duration = time.Since(start)
+		return res
+	}
+	resp, _, err := doGet(ctx, fmt.Sprintf("https://www.meteosource.com/api/v1/free/point?lat=%.4f&lon=%.4f&sections=current&language=en&units=metric&key=%s", lat, lon, m.key))
 	if err != nil {
 		res.Error = fmt.Errorf("weather request failed: %w", err)
 		res.Duration = time.Since(start)
@@ -347,7 +382,7 @@ type PirateWeatherSource struct{ key string }
 
 func (p *PirateWeatherSource) Name() string { return "Pirate Weather" }
 
-func (p *PirateWeatherSource) Fetch(ctx context.Context, city string) WeatherData {
+func (p *PirateWeatherSource) Fetch(ctx context.Context, city string, coordsCache map[string][2]float64) WeatherData {
 	start := time.Now()
 	res := WeatherData{Source: p.Name()}
 	if p.key == "" {
@@ -355,7 +390,7 @@ func (p *PirateWeatherSource) Fetch(ctx context.Context, city string) WeatherDat
 		res.Duration = time.Since(start)
 		return res
 	}
-	lat, lon, err := lookupLatLon(ctx, city)
+	lat, lon, err := getCoordinates(ctx, city, coordsCache)
 	if err != nil {
 		res.Error = err
 		res.Duration = time.Since(start)
@@ -399,7 +434,7 @@ func fetchWeatherConcurrently(ctx context.Context, city string, sources []Weathe
 
 	ch := make(chan WeatherData, len(sources))
 	for _, s := range sources {
-		go func(src WeatherSource) { ch <- src.Fetch(ctx, city) }(s)
+		go func(src WeatherSource) { ch <- src.Fetch(ctx, city, coordsCache) }(s)
 	}
 	results := make([]WeatherData, 0, len(sources))
 	for i := 0; i < len(sources); i++ {
@@ -408,25 +443,20 @@ func fetchWeatherConcurrently(ctx context.Context, city string, sources []Weathe
 	return results
 }
 
+// fetchSequential fetches weather data sequentially for performance comparison.
+func fetchSequential(ctx context.Context, city string, sources []WeatherSource) []WeatherData {
+	// Pre-geocode city once to avoid redundant calls
+	coordsCache := make(map[string][2]float64)
+	if lat, lon, err := lookupLatLon(ctx, city); err == nil {
+		coordsCache[city] = [2]float64{lat, lon}
+	}
 
-// loadWeatherCodes loads weather code mappings from shared JSON file.
-// Uses sync.Once to ensure thread-safe single initialization.
-func loadWeatherCodes() error {
-	weatherCodesOnce.Do(func() {
-		path := filepath.Join("..", "weather_codes.json")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			weatherCodesErr = fmt.Errorf("failed to read weather_codes.json: %w", err)
-			return
-		}
-		if err := json.Unmarshal(data, &WeatherCodes); err != nil {
-			weatherCodesErr = fmt.Errorf("failed to parse weather_codes.json: %w", err)
-			return
-		}
-	})
-	return weatherCodesErr
+	results := make([]WeatherData, 0, len(sources))
+	for _, s := range sources {
+		results = append(results, s.Fetch(ctx, city, coordsCache))
+	}
+	return results
 }
-
 
 // AggregateWeather calculates avg temp/humidity and consensus condition from valid data.
 func AggregateWeather(data []WeatherData) (avgTemp, avgHum float64, cond string, valid int) {

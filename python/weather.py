@@ -33,11 +33,21 @@ class APIError(WeatherError):
     pass
 
 
-# Load weather code mappings and condition info from shared JSON file
+# Load weather code mappings and condition info from shared JSON file (lazy, cached)
 _WEATHER_CODES_PATH = Path(__file__).parent.parent / "weather_codes.json"
-with open(_WEATHER_CODES_PATH) as f:
-    _WEATHER_CODES = json.load(f)
-    _CONDITIONS = _WEATHER_CODES.get("conditions", {})
+_WEATHER_CODES_CACHE = None
+_CONDITIONS_CACHE = None
+
+
+def _load_weather_codes() -> tuple[dict, dict]:
+    """Lazy-load weather code mappings and conditions (cached)."""
+    global _WEATHER_CODES_CACHE, _CONDITIONS_CACHE
+    if _WEATHER_CODES_CACHE is None:
+        with open(_WEATHER_CODES_PATH) as f:
+            codes = json.load(f)
+        _WEATHER_CODES_CACHE = codes
+        _CONDITIONS_CACHE = codes.get("conditions", {})
+    return _WEATHER_CODES_CACHE, _CONDITIONS_CACHE
 
 
 @dataclass
@@ -85,14 +95,10 @@ async def http_get_json(url: str, session: aiohttp.ClientSession) -> dict:
             return await resp.json()
     except asyncio.TimeoutError:
         raise APIError("timeout")
-    except aiohttp.ClientConnectorError as e:
-        raise APIError(f"connection failed: {str(e)}")
-    except aiohttp.ServerTimeoutError:
-        raise APIError("server timeout")
-    except aiohttp.ClientError as e:
-        raise APIError(f"network error: {type(e).__name__}")
-    except ValueError as e:
+    except json.JSONDecodeError as e:
         raise APIError(f"invalid JSON: {str(e)}")
+    except aiohttp.ClientError as e:
+        raise APIError(f"request failed: {str(e)}")
 
 
 async def geocode_city(
@@ -489,7 +495,8 @@ def aggregate_weather(data: List[WeatherData]) -> Dict:
 
 def _map_wmo_code(code: int) -> str:
     """Map WMO weather codes to readable conditions."""
-    for range_def in _WEATHER_CODES["wmo"]["ranges"]:
+    codes, _ = _load_weather_codes()
+    for range_def in codes["wmo"]["ranges"]:
         if range_def["min"] <= code <= range_def["max"]:
             return range_def["condition"]
     return "Unknown"
@@ -501,31 +508,42 @@ def _map_tomorrow_code(code: str) -> str:
         code_str = str(int(code))
     except (ValueError, TypeError):
         return "Unknown"
-    return _WEATHER_CODES["tomorrow_io"].get(code_str, "Unknown")
+    codes, _ = _load_weather_codes()
+    return codes["tomorrow_io"].get(code_str, "Unknown")
 
 
 def normalize_condition(condition: str) -> str:
     """Normalize conditions to standard categories via keyword matching.
-    
+
     Checks more specific patterns first (e.g., 'Partly Cloudy' before 'Cloudy').
     """
     lower = condition.lower()
-    
+    _, conditions = _load_weather_codes()
+
     # Check in priority order (most specific first)
-    condition_order = ["Partly Cloudy", "Clear", "Cloudy", "Rainy", "Snowy", "Foggy", "Stormy"]
-    
+    condition_order = [
+        "Partly Cloudy",
+        "Clear",
+        "Cloudy",
+        "Rainy",
+        "Snowy",
+        "Foggy",
+        "Stormy",
+    ]
+
     for normalized in condition_order:
-        if normalized in _CONDITIONS:
-            if any(kw in lower for kw in _CONDITIONS[normalized]["keywords"]):
+        if normalized in conditions:
+            if any(kw in lower for kw in conditions[normalized]["keywords"]):
                 return normalized
-    
+
     return condition
 
 
 def get_condition_emoji(condition: str) -> str:
     """Map condition to emoji. Returns thermometer if no match."""
     lower = condition.lower()
-    for normalized, info in _CONDITIONS.items():
+    _, conditions = _load_weather_codes()
+    for normalized, info in conditions.items():
         if normalized.lower() in lower:
             return info["emoji"]
         if any(kw in lower for kw in info["keywords"]):

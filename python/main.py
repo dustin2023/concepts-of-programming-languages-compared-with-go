@@ -27,23 +27,6 @@ from weather import (
 )
 
 
-def validate_city_name(city: str) -> Optional[str]:
-    """Validate city name (letters, spaces, hyphens, periods, max 100 chars)."""
-    city = city.strip()
-
-    if not city:
-        return None
-
-    if len(city) > MAX_CITY_NAME_LENGTH:
-        return None
-
-    # Allow Unicode letters (including umlauts, accents), numbers, spaces, hyphens, apostrophes, and periods
-    if not re.match(r"^[\w\s\-'\.]+$", city, re.UNICODE):
-        return None
-
-    return city
-
-
 def init_sources() -> list:
     """Initialize weather sources (free + API-key sources if configured)."""
     sources = [OpenMeteoSource()]
@@ -65,6 +48,23 @@ def init_sources() -> list:
         sources.append(PirateWeatherSource(key))
 
     return sources
+
+
+def validate_city_name(city: str) -> Optional[str]:
+    """Validate city name (letters, spaces, hyphens, periods, max 100 chars)."""
+    city = city.strip()
+
+    if not city:
+        return None
+
+    if len(city) > MAX_CITY_NAME_LENGTH:
+        return None
+
+    # Allow Unicode letters (including umlauts, accents), numbers, spaces, hyphens, apostrophes, and periods
+    if not re.match(r"^[\w\s\-'\.]+$", city, re.UNICODE):
+        return None
+
+    return city
 
 
 def display_results(data: List[WeatherData]) -> None:
@@ -130,11 +130,12 @@ async def main() -> int:
             "\nUsage: python main.py --city <city> [--sequential] [--exclude source1,source2]"
         )
         print("  --city       City name (required, spaces allowed)")
-        print("               Examples: --city Berlin")
-        print("                        --city New York")
-        print('                        --city "St. Gallen" (quotes optional)')
         print("  --sequential Use sequential fetching instead of concurrent (optional)")
         print("  --exclude    Comma-separated source names to skip (optional)")
+        print("\nExamples: --city Berlin")
+        print("  ./main.py --city New York")
+        print("  ./main.py --city Berlin --exclude Weatherstack")
+        print("  ./main.py --city São Paulo --sequential")
         print("\nAPI keys are loaded from .env file.")
         return 1
 
