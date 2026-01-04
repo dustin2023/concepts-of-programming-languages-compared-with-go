@@ -16,6 +16,9 @@ func validateCityName(city string) (string, error) {
 	if trimmed == "" {
 		return "", fmt.Errorf("city name is required and cannot be empty")
 	}
+	if strings.HasPrefix(trimmed, "-") {
+		return "", fmt.Errorf("city name cannot start with '-'")
+	}
 	if len(trimmed) > 100 {
 		return "", fmt.Errorf("city name must not exceed 100 characters")
 	}

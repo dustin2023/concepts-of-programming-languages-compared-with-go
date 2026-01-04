@@ -25,6 +25,7 @@ func TestValidateCityName(t *testing.T) {
 		{"valid with dash", "Baden-Baden", "Baden-Baden", false},
 		{"empty string", "", "", true},
 		{"only whitespace", "   ", "", true},
+		{"dash prefix", "-Baden-Baden", "", true},
 		{"exceeds max length", "A" + string(make([]byte, 100)), "", true},
 		{"invalid char @", "City@Name", "", true},
 	}
