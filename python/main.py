@@ -74,7 +74,7 @@ async def main() -> int:
 
     parser = argparse.ArgumentParser(
         description="Weather Data Aggregator",
-        epilog="Example: %(prog)s --city New York --sequential",
+        epilog="Examples: %(prog)s --city New York   |   %(prog)s --city \"O'Brien\"",
     )
     parser.add_argument(
         "--city",
@@ -109,6 +109,7 @@ async def main() -> int:
         print("  --exclude    Comma-separated source names to skip (optional)")
         print("\nExamples: --city Berlin")
         print("  ./main.py --city New York")
+        print("  ./main.py --city \"O'Brien\"   # apostrophe needs double-quotes in the shell")
         print("  ./main.py --city Berlin --exclude WeatherAPI.com")
         print("  ./main.py --city São Paulo --sequential")
         print("\nAPI keys are loaded from .env file.")

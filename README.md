@@ -209,9 +209,10 @@ cd go
 go build -o weather-aggregator
 ./weather-aggregator --city Berlin
 
-# Multi-word cities work without quotes:
+# Multi-word cities work without quotes, but apostrophes need double-quotes because of the shell:
 ./weather-aggregator --city New York
 ./weather-aggregator --city St. Gallen
+./weather-aggregator --city "O'Brien"
 
 # Unicode support (umlauts, accents, etc.):
 ./weather-aggregator --city München
@@ -238,9 +239,10 @@ pip install -r requirements.txt
 # Run the application
 python main.py --city Berlin
 
-# Multi-word cities (spaces allowed, quotes optional):
+# Multi-word cities (spaces allowed, quotes optional; apostrophes need double-quotes):
 python main.py --city New York
 python main.py --city "St. Gallen"
+python main.py --city "O'Brien"
 
 # Unicode support (umlauts, accents, etc.):
 python main.py --city München

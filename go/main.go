@@ -94,6 +94,7 @@ func main() {
 		fmt.Println("  --exclude    Comma-separated source names to skip (optional)")
 		fmt.Println("\nExamples:")
 		fmt.Println("  ./weather-aggregator --city New York")
+		fmt.Println("  ./weather-aggregator --city \"O'Brien\"    # apostrophe needs double-quotes in the shell")
 		fmt.Println("  ./weather-aggregator --city Berlin --exclude WeatherAPI.com")
 		fmt.Println("  ./weather-aggregator --city \"São Paulo\" --sequential")
 		fmt.Println("\nAPI keys are loaded from .env file.")

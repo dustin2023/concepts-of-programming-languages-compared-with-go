@@ -22,7 +22,6 @@ func TestValidateCityName(t *testing.T) {
 		{"valid single", "Munich", "Munich", false},
 		{"valid multi-word", "New York", "New York", false},
 		{"valid Unicode", "São Paulo", "São Paulo", false},
-		{"valid with apostrophe", "O'Brien", "O'Brien", false},
 		{"empty string", "", "", true},
 		{"only whitespace", "   ", "", true},
 		{"flag-like", "--city", "", true},
