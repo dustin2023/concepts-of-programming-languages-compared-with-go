@@ -43,7 +43,7 @@ def create_parser() -> argparse.ArgumentParser:
     """Create and return the argument parser."""
     parser = argparse.ArgumentParser(
         description="Weather Data Aggregator",
-        epilog="Examples: %(prog)s --city New York   |   %(prog)s --city \"O'Brien\"",
+        epilog='Examples: %(prog)s --city New York   |   %(prog)s --city "O\'Brien"',
     )
     parser.add_argument(
         "--city",
@@ -75,7 +75,7 @@ def print_city_validation_error() -> None:
     print("  --exclude    Comma-separated source names to skip (optional)")
     print("\nExamples:")
     print("  ./main.py --city New York")
-    print("  ./main.py --city \"O'Brien\"   # apostrophe needs double-quotes in the shell")
+    print('  ./main.py --city "O\'Brien"   # apostrophe needs double-quotes')
     print("  ./main.py --city Berlin --exclude WeatherAPI.com")
     print("\nAPI keys are loaded from .env file.")
 

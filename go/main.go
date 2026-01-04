@@ -155,18 +155,17 @@ func main() {
 	allSources := initSources()
 
 	// Filter out excluded sources
-	excludedMap := make(map[string]bool)
+	sources := allSources
 	if exclude != "" {
+		excludedMap := make(map[string]bool)
 		for _, name := range strings.Split(exclude, ",") {
-			n := strings.TrimSpace(name)
-			excludedMap[normalizeSourceName(n)] = true
+			excludedMap[normalizeSourceName(strings.TrimSpace(name))] = true
 		}
-	}
-
-	sources := make([]WeatherSource, 0, len(allSources))
-	for _, s := range allSources {
-		if !excludedMap[normalizeSourceName(s.Name())] {
-			sources = append(sources, s)
+		sources = make([]WeatherSource, 0, len(allSources))
+		for _, s := range allSources {
+			if !excludedMap[normalizeSourceName(s.Name())] {
+				sources = append(sources, s)
+			}
 		}
 	}
 
