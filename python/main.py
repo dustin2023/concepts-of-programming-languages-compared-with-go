@@ -34,7 +34,6 @@ def validate_city_name(city: str) -> Optional[str]:
     if not city:
         return None
 
-
     if len(city) > MAX_CITY_NAME_LENGTH:
         return None
 
@@ -103,14 +102,14 @@ async def main() -> int:
 
     parser = argparse.ArgumentParser(
         description="Weather Data Aggregator",
-        epilog="Example: %(prog)s --city New York --sequential"
+        epilog="Example: %(prog)s --city New York --sequential",
     )
     parser.add_argument(
         "--city",
         nargs="+",
         required=True,
         metavar="NAME",
-        help="City name (spaces allowed, quotes optional)"
+        help="City name (spaces allowed, quotes optional)",
     )
     parser.add_argument("--sequential", action="store_true", help="Sequential fetching")
     parser.add_argument(
@@ -133,7 +132,7 @@ async def main() -> int:
         print("  --city       City name (required, spaces allowed)")
         print("               Examples: --city Berlin")
         print("                        --city New York")
-        print("                        --city \"St. Gallen\" (quotes optional)")
+        print('                        --city "St. Gallen" (quotes optional)')
         print("  --sequential Use sequential fetching instead of concurrent (optional)")
         print("  --exclude    Comma-separated source names to skip (optional)")
         print("\nAPI keys are loaded from .env file.")

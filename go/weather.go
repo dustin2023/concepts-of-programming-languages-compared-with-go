@@ -442,7 +442,6 @@ func (p *PirateWeatherSource) Fetch(ctx context.Context, city string) WeatherDat
 	return res
 }
 
-// ========== Aggregation Functions ==========
 
 // AggregateWeather calculates avg temp/humidity and consensus condition from valid data.
 func AggregateWeather(data []WeatherData) (avgTemp, avgHum float64, cond string, valid int) {

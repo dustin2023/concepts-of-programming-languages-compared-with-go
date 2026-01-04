@@ -17,9 +17,6 @@ func validateCityName(city string) error {
 	if trimmed == "" {
 		return fmt.Errorf("city name is required and cannot be empty")
 	}
-	if len(trimmed) < 2 {
-		return fmt.Errorf("city name must be at least 2 characters long")
-	}
 	if len(city) > 100 {
 		return fmt.Errorf("city name must not exceed 100 characters")
 	}
@@ -32,7 +29,6 @@ func validateCityName(city string) error {
 }
 
 func main() {
-	// Load .env from parent directory
 	_ = godotenv.Load("../.env")
 
 	// Parse command-line flags
