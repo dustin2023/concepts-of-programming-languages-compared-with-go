@@ -88,39 +88,34 @@ The application follows a modular architecture with clear separation of concerns
 
 ```mermaid
 graph TD
-    A[CLI Entry Point<br/>main.go / main.py] --> B[Input Validator]
-    B --> C{Mode Selection}
-    C -->|Concurrent| D[Concurrent Fetcher]
-    C -->|Sequential| E[Sequential Fetcher]
-    
-    D --> F1[Geocoding API<br/>Open-Meteo]
-    E --> F1
-    
-    F1 -->|Lat/Lon| G[Coordinate Cache]
-    
-    D --> H[Weather Source Pool]
-    E --> H
-    
-    H --> S1[Open-Meteo]
-    H --> S2[Tomorrow.io]
-    H --> S3[WeatherAPI.com]
-    H --> S4[Meteosource]
-    H --> S5[Pirate Weather]
-    
-    S1 --> I[HTTP Response Handler]
-    S2 --> I
-    S3 --> I
-    S4 --> I
-    S5 --> I
-    
-    I --> J[Data Aggregator]
-    J --> K[Console Output]
+    A[User Input<br/>(CLI)] --> B[Input Validation]
+    B --> C[Geocoding<br/>(Open-Meteo)]
+    C --> D[Coordinate Cache]
+    D --> E[Parallel Weather API Calls]
+    E --> F1[Open-Meteo]
+    E --> F2[Tomorrow.io]
+    E --> F3[WeatherAPI.com]
+    E --> F4[Meteosource]
+    E --> F5[Pirate Weather]
+    F1 --> G[Result Aggregator]
+    F2 --> G
+    F3 --> G
+    F4 --> G
+    F5 --> G
+    G --> H[Console Output]
     
     style A fill:#e1f5ff
+    style B fill:#e1f5ff
+    style C fill:#c8e6c9
     style D fill:#c8e6c9
-    style E fill:#fff9c4
-    style J fill:#f8bbd0
-    style K fill:#d1c4e9
+    style E fill:#b3e5fc
+    style F1 fill:#fff9c4
+    style F2 fill:#fff9c4
+    style F3 fill:#fff9c4
+    style F4 fill:#fff9c4
+    style F5 fill:#fff9c4
+    style G fill:#f8bbd0
+    style H fill:#d1c4e9
 ```
 
 
