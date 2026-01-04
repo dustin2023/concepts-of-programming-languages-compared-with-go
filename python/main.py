@@ -107,6 +107,34 @@ def display_results(data: List[WeatherData]) -> None:
         print("→ No valid data available")
 
 
+def filter_excluded_sources(sources: List, exclude_args: list) -> List:
+    """Filter out excluded sources from the list."""
+    if not exclude_args:
+        return sources
+
+    exclude_raw = " ".join(exclude_args)
+    excluded_names = {
+        normalize_source(name.strip()) for name in exclude_raw.split(",")
+    }
+    return [s for s in sources if normalize_source(s.name) not in excluded_names]
+
+
+async def run_weather_fetch(
+    city: str, sources: List, sequential: bool
+) -> List[WeatherData]:
+    """Execute weather fetching with the chosen strategy."""
+    print(f"🌍 {city} | Fetching from {len(sources)} sources...")
+
+    start_time = time.perf_counter()
+    data = await (
+        fetch_weather_sequentially if sequential else fetch_weather_concurrently
+    )(city, sources)
+    duration = time.perf_counter() - start_time
+
+    print(f"⏱️  Completed in {duration:.3f}s\n")
+    return data
+
+
 async def main() -> int:
     load_dotenv()
 
@@ -119,35 +147,17 @@ async def main() -> int:
 
     args = create_parser().parse_args()
 
-    # Join multi-word city names
     city = validate_city_name(" ".join(args.city))
     if not city:
         print_city_validation_error()
         return 1
 
-    sources = init_sources()
-
-    # Filter out excluded sources
-    if args.exclude:
-        exclude_raw = " ".join(args.exclude)
-        excluded_names = {
-            normalize_source(name.strip()) for name in exclude_raw.split(",")
-        }
-        sources = [s for s in sources if normalize_source(s.name) not in excluded_names]
-
+    sources = filter_excluded_sources(init_sources(), args.exclude)
     if not sources:
         print("Error: All sources were excluded", file=sys.stderr)
         return 1
 
-    print(f"🌍 {city} | Fetching from {len(sources)} sources...")
-
-    start_time = time.perf_counter()
-    data = await (
-        fetch_weather_sequentially if args.sequential else fetch_weather_concurrently
-    )(city, sources)
-    duration = time.perf_counter() - start_time
-
-    print(f"⏱️  Completed in {duration:.3f}s\n")
+    data = await run_weather_fetch(city, sources, args.sequential)
     display_results(data)
 
     return 0

@@ -134,56 +134,33 @@ func displayResults(data []WeatherData) {
 	}
 }
 
-func main() {
-	_ = godotenv.Load("../.env")
-
-	// Load weather code mappings once (needed for all sources)
-	if err := loadWeatherCodes(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading weather codes: %v\n", err)
-		os.Exit(1)
+// filterExcludedSources removes excluded sources from the list.
+func filterExcludedSources(allSources []WeatherSource, exclude string) []WeatherSource {
+	if exclude == "" {
+		return allSources
 	}
 
-	city, exclude, sequential := parseFlags()
-
-	// Validate city input
-	cityName, err := validateCityName(city)
-	if err != nil {
-		printCityValidationError(err)
-		os.Exit(1)
+	excludedMap := make(map[string]bool)
+	for _, name := range strings.Split(exclude, ",") {
+		excludedMap[normalizeSourceName(strings.TrimSpace(name))] = true
 	}
 
-	allSources := initSources()
-
-	// Filter out excluded sources
-	sources := allSources
-	if exclude != "" {
-		excludedMap := make(map[string]bool)
-		for _, name := range strings.Split(exclude, ",") {
-			excludedMap[normalizeSourceName(strings.TrimSpace(name))] = true
-		}
-		sources = make([]WeatherSource, 0, len(allSources))
-		for _, s := range allSources {
-			if !excludedMap[normalizeSourceName(s.Name())] {
-				sources = append(sources, s)
-			}
+	sources := make([]WeatherSource, 0, len(allSources))
+	for _, s := range allSources {
+		if !excludedMap[normalizeSourceName(s.Name())] {
+			sources = append(sources, s)
 		}
 	}
+	return sources
+}
 
-	if len(sources) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: All sources were excluded")
-		os.Exit(1)
-	}
-
+// runWeatherFetch executes weather fetching with the chosen strategy.
+func runWeatherFetch(ctx context.Context, cityName string, sources []WeatherSource, sequential bool) []WeatherData {
 	fmt.Printf("🌍 %s | Fetching from %d sources...\n", cityName, len(sources))
-
-	// Overall timeout for the whole run to avoid hanging
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 
 	start := time.Now()
 	var data []WeatherData
 
-	// Choose execution strategy based on flag
 	if sequential {
 		data = fetchSequential(ctx, cityName, sources)
 	} else {
@@ -192,5 +169,34 @@ func main() {
 	duration := time.Since(start)
 
 	fmt.Printf("⏱️  Completed in %.3fs\n\n", duration.Seconds())
+	return data
+}
+
+func main() {
+	_ = godotenv.Load("../.env")
+
+	if err := loadWeatherCodes(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading weather codes: %v\n", err)
+		os.Exit(1)
+	}
+
+	city, exclude, sequential := parseFlags()
+
+	cityName, err := validateCityName(city)
+	if err != nil {
+		printCityValidationError(err)
+		os.Exit(1)
+	}
+
+	sources := filterExcludedSources(initSources(), exclude)
+	if len(sources) == 0 {
+		fmt.Fprintln(os.Stderr, "Error: All sources were excluded")
+		os.Exit(1)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	data := runWeatherFetch(ctx, cityName, sources, sequential)
 	displayResults(data)
 }

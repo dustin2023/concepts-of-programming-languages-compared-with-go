@@ -135,3 +135,19 @@ async def test_open_meteo_integration_invalid_city():
 
     # Should have an error, not crash
     assert result.error is not None
+
+
+@pytest.mark.asyncio
+async def test_geocode_city():
+    """Test city geocoding functionality."""
+    from weather import geocode_city
+
+    async with aiohttp.ClientSession() as session:
+        # Valid city should return coordinates
+        lat, lon = await geocode_city("Munich", session)
+        assert 47.0 < lat < 49.0  # Munich is around 48°N
+        assert 11.0 < lon < 12.0  # Munich is around 11.5°E
+
+        # Invalid city should raise error
+        with pytest.raises(Exception):  # GeocodingError
+            await geocode_city("XyzInvalidCity12345", session)

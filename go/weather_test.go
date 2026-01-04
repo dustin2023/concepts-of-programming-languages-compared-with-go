@@ -193,3 +193,25 @@ func TestFetchWeatherBehavior(t *testing.T) {
 		}
 	})
 }
+
+func TestGeocodeCity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	t.Run("valid city", func(t *testing.T) {
+		lat, lon, err := geocodeCity(ctx, "Berlin")
+		if err != nil {
+			t.Fatalf("geocodeCity failed: %v", err)
+		}
+		if lat < 52.0 || lat > 53.0 || lon < 13.0 || lon > 14.0 {
+			t.Errorf("unexpected coordinates for Berlin: lat=%.2f, lon=%.2f", lat, lon)
+		}
+	})
+
+	t.Run("invalid city", func(t *testing.T) {
+		_, _, err := geocodeCity(ctx, "XyzInvalidCity12345")
+		if err == nil {
+			t.Error("expected error for invalid city, got nil")
+		}
+	})
+}
