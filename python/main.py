@@ -26,6 +26,10 @@ from weather import (
 )
 
 
+def _normalize_source(name: str) -> str:
+    return name.replace(" ", "").replace("-", "").replace(".", "").lower()
+
+
 def init_sources() -> list:
     """Initialize weather sources (free + API-key sources if configured)."""
     sources = [OpenMeteoSource()]
@@ -109,7 +113,10 @@ async def main() -> int:
     )
     parser.add_argument("--sequential", action="store_true", help="Sequential fetching")
     parser.add_argument(
-        "--exclude", default="", help="Exclude sources (comma-separated)"
+        "--exclude",
+        nargs="+",
+        default=[],
+        help="Exclude sources (comma-separated; spaces allowed without quotes)",
     )
 
     args = parser.parse_args()
@@ -139,8 +146,11 @@ async def main() -> int:
 
     # Filter out excluded sources
     if args.exclude:
-        excluded_names = {name.strip() for name in args.exclude.split(",")}
-        sources = [s for s in sources if s.name not in excluded_names]
+        exclude_raw = " ".join(args.exclude)
+        excluded_names = {
+            _normalize_source(name.strip()) for name in exclude_raw.split(",")
+        }
+        sources = [s for s in sources if _normalize_source(s.name) not in excluded_names]
 
     if not sources:
         print("Error: All sources were excluded", file=sys.stderr)

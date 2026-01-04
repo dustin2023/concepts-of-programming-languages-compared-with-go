@@ -148,13 +148,6 @@ func (o *OpenMeteoSource) Fetch(ctx context.Context, city string, coordsCache ma
 	start := time.Now()
 	res := WeatherData{Source: o.Name()}
 
-	// Ensure weather codes are loaded
-	if err := loadWeatherCodes(); err != nil {
-		res.Error = fmt.Errorf("configuration error: %w", err)
-		res.Duration = time.Since(start)
-		return res
-	}
-
 	lat, lon, err := getCoordinates(ctx, city, coordsCache)
 	if err != nil {
 		res.Error = err
@@ -334,7 +327,7 @@ func (m *MeteosourceSource) Fetch(ctx context.Context, city string, coordsCache 
 // PirateWeatherSource - Dark Sky compatible, requires API key.
 type PirateWeatherSource struct{ key string }
 
-func (p *PirateWeatherSource) Name() string { return "Pirate Weather" }
+func (p *PirateWeatherSource) Name() string { return "Pirate-Weather" }
 
 func (p *PirateWeatherSource) Fetch(ctx context.Context, city string, coordsCache map[string][2]float64) WeatherData {
 	start := time.Now()

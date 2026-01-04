@@ -325,7 +325,7 @@ class MeteosourceSource(BaseAPISource):
 class PirateWeatherSource(BaseAPISource):
     """Pirate Weather API - Dark Sky compatible, requires key."""
 
-    name = "Pirate Weather"
+    name = "Pirate-Weather"
 
     async def fetch(
         self,

@@ -29,6 +29,15 @@ func initSources() []WeatherSource {
 	return sources
 }
 
+// normalizeSourceName lowercases and removes spaces/dashes/dots for comparison
+func normalizeSourceName(name string) string {
+	n := strings.ToLower(name)
+	n = strings.ReplaceAll(n, " ", "")
+	n = strings.ReplaceAll(n, "-", "")
+	n = strings.ReplaceAll(n, ".", "")
+	return n
+}
+
 func validateCityName(city string) (string, error) {
 	trimmed := strings.TrimSpace(city)
 	if trimmed == "" {
@@ -38,16 +47,13 @@ func validateCityName(city string) (string, error) {
 	if strings.HasPrefix(trimmed, "-") {
 		return "", fmt.Errorf("city name cannot start with '-'; did you mean to pass a flag?")
 	}
-	if len(trimmed) < 2 {
-		return "", fmt.Errorf("city name must be at least 2 characters long")
-	}
 	if len(trimmed) > 100 {
 		return "", fmt.Errorf("city name must not exceed 100 characters")
 	}
-	// Allow Unicode letters (including umlauts, accents), numbers, spaces, hyphens, apostrophes, and periods
-	matched, _ := regexp.MatchString(`^[\p{L}0-9\s\-'\.]+$`, trimmed)
+	// Allow Unicode letters, digits, spaces, any dash, apostrophes, periods, underscore (aligns with Python \w)
+	matched, _ := regexp.MatchString(`^[\p{L}0-9_\s\p{Pd}'\.]+$`, trimmed)
 	if !matched {
-		return "", fmt.Errorf("city name contains invalid characters. Use letters (including ü, é, ñ), numbers, spaces, hyphens, apostrophes, and periods")
+		return "", fmt.Errorf("Invalid city name. Allowed: letters (ü, é, ñ), digits, spaces, hyphens, apostrophes, periods")
 	}
 	return trimmed, nil
 }
@@ -67,19 +73,37 @@ func main() {
 	if *city != "" {
 		cityParts = append(cityParts, *city)
 	}
-	
+
+	excludeParts := []string{}
 	for i := 0; i < len(flag.Args()); i++ {
 		arg := flag.Args()[i]
-		if strings.HasPrefix(arg, "--exclude=") {
-			*exclude = strings.TrimPrefix(arg, "--exclude=")
-		} else if arg == "--exclude" && i+1 < len(flag.Args()) {
-			i++
-			*exclude = flag.Args()[i]
-		} else if strings.HasPrefix(arg, "--sequential") {
+
+		switch {
+		case strings.HasPrefix(arg, "--exclude="):
+			val := strings.TrimPrefix(arg, "--exclude=")
+			excludeParts = append(excludeParts, val)
+
+		case arg == "--exclude":
+			// Collect following tokens until next flag
+			for j := i + 1; j < len(flag.Args()) && !strings.HasPrefix(flag.Args()[j], "--"); j++ {
+				excludeParts = append(excludeParts, flag.Args()[j])
+				i = j
+			}
+
+		case strings.HasPrefix(arg, "--sequential"):
 			*seq = true
-		} else if !strings.HasPrefix(arg, "-") {
-			cityParts = append(cityParts, arg)
+
+		case !strings.HasPrefix(arg, "-"):
+			if strings.Contains(arg, ",") {
+				excludeParts = append(excludeParts, arg)
+			} else {
+				cityParts = append(cityParts, arg)
+			}
 		}
+	}
+
+	if len(excludeParts) > 0 {
+		*exclude = strings.Join(excludeParts, " ")
 	}
 	
 	if len(cityParts) > 0 {
@@ -103,18 +127,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Load weather code mappings once (needed for all sources, not nur Open-Meteo)
+	if err := loadWeatherCodes(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading weather codes: %v\n", err)
+		os.Exit(1)
+	}
+
 	allSources := initSources()
 
 	excludedMap := make(map[string]bool)
 	if *exclude != "" {
 		for _, name := range strings.Split(*exclude, ",") {
-			excludedMap[strings.TrimSpace(name)] = true
+			n := strings.TrimSpace(name)
+			excludedMap[normalizeSourceName(n)] = true
 		}
 	}
 
 	sources := make([]WeatherSource, 0, len(allSources))
 	for _, s := range allSources {
-		if !excludedMap[s.Name()] {
+		if !excludedMap[normalizeSourceName(s.Name())] {
 			sources = append(sources, s)
 		}
 	}
