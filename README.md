@@ -1,31 +1,56 @@
 # Weather Data Aggregator: Go vs Python Concurrency Comparison
 
 **Semester Project – Concepts of Programming Languages**  
-**Technical Univerity of Applied Science Rosenheim – Winter 2025/2026**
+**Technical University of Applied Science Rosenheim – Winter 2025/2026**
 
 This project demonstrates and compares parallel programming concepts in **Go** and **Python** through a real-world CLI application that fetches weather data from multiple APIs concurrently and aggregates the results.
+
+---
+
+## 🚀 Quick Start
+
+### Unified Launcher (Recommended)
+```bash
+# Run Go implementation (default)
+./weather --city Berlin
+
+# Run Python implementation
+./weather python --city München
+
+# Compare both implementations side-by-side
+./weather both --city "San Francisco"
+```
+
+
+### Direct Execution
+```bash
+# Go
+cd go && go build -o weather-aggregator
+./weather-aggregator --city Berlin
+
+# Python
+cd python && ./main.py --city Berlin
+```
 
 ---
 
 ## 📋 Project Overview
 
 A command-line weather aggregator that demonstrates:
-- **Concurrent API requests** (6 weather sources in parallel)
+- **Concurrent API requests** (5-6 weather sources in parallel)
 - **Language-specific concurrency patterns** (Goroutines vs asyncio)
 - **Error-resilient design** (graceful degradation when sources fail)
 - **Data aggregation** (temperature, humidity, weather conditions)
 - **Real-world HTTP client best practices**
-- **International support** (Unicode city names: München, São Paulo, Kraków)
+- **International support** (Unicode city names: München, São Paulo, Kraków, O'Brien)
 
 ### Key Metrics
 
 | Aspect | Go | Python |
 |--------|-----|--------|
 | **Concurrency Model** | Goroutines + Channels | asyncio + coroutines |
-| **Core LOC** | 692 (main + weather) | 701 (main + weather) |
-| **Test LOC** | 224 (incl. 2 integration tests) | 226 (incl. 2 integration tests) |
-| **Number of Tests** | 13 unit/integration tests | 14 unit/integration tests |
-| **Test Coverage** | 30.4% (core logic focused) | 48% (core logic focused) |
+| **Core LOC** | ~920 (main + weather + tests) | ~820 (main + weather + tests) |
+| **Number of Tests** | 19 assertions (4 test groups) | 14 tests (parametrized) |
 | **Dependencies** | 1 (godotenv) | 3 (aiohttp, python-dotenv, pytest-asyncio) |
 
 ---
@@ -40,7 +65,7 @@ graph TD
     B --> C{Sequential Mode?}
     C -->|No| D[Concurrent Fetcher]
     C -->|Yes| E[Sequential Fetcher]
-    D --> F[Weather Sources 1-6]
+    D --> F[Weather Sources 1-5]
     E --> F
     F --> G[Geocoding API]
     F --> H[Weather APIs]

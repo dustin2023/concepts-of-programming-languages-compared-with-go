@@ -1,0 +1,74 @@
+#!/bin/bash
+# Unified launcher for weather aggregator (Go or Python)
+# Usage: ./weather [go|python|both] [args...]
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GO_DIR="$SCRIPT_DIR/go"
+PYTHON_DIR="$SCRIPT_DIR/python"
+
+show_usage() {
+    cat << EOF
+Weather Aggregator - Unified Launcher
+
+Usage: 
+  ./weather go [args...]       Run Go implementation
+  ./weather python [args...]   Run Python implementation
+  ./weather both [args...]     Run both implementations side-by-side
+  ./weather [args...]          Run Go implementation (default)
+
+Examples:
+  ./weather --city Berlin
+  ./weather go --city "New York" --sequential
+  ./weather python --city München --exclude WeatherAPI.com
+  ./weather both --city "San Francisco"
+
+EOF
+}
+
+run_go() {
+    echo "═══════════════════════════════════════════════════════════"
+    echo "Running Go Implementation"
+    echo "═══════════════════════════════════════════════════════════"
+    cd "$GO_DIR"
+    if [ ! -f "weather-aggregator" ]; then
+        echo "Building Go binary..."
+        go build -o weather-aggregator
+    fi
+    ./weather-aggregator "$@"
+}
+
+run_python() {
+    echo "═══════════════════════════════════════════════════════════"
+    echo "Running Python Implementation"
+    echo "═══════════════════════════════════════════════════════════"
+    cd "$PYTHON_DIR"
+    ./main.py "$@"
+}
+
+# Parse command
+case "${1:-go}" in
+    go)
+        shift
+        run_go "$@"
+        ;;
+    python|py)
+        shift
+        run_python "$@"
+        ;;
+    both)
+        shift
+        run_go "$@"
+        echo ""
+        run_python "$@"
+        ;;
+    -h|--help|help)
+        show_usage
+        exit 0
+        ;;
+    *)
+        # Default: treat as Go with all args
+        run_go "$@"
+        ;;
+esac
