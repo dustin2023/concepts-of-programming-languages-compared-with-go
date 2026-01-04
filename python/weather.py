@@ -33,21 +33,19 @@ class APIError(WeatherError):
     pass
 
 
-# Load weather code mappings and condition info from shared JSON file (lazy, cached)
+# Global weather code mappings (loaded once at startup like Go)
 _WEATHER_CODES_PATH = Path(__file__).parent.parent / "weather_codes.json"
-_WEATHER_CODES_CACHE = None
-_CONDITIONS_CACHE = None
+weather_code_mapping: dict = {}
+condition_mapping: dict = {}
 
 
-def _load_weather_codes() -> tuple[dict, dict]:
-    """Lazy-load weather code mappings and conditions (cached)."""
-    global _WEATHER_CODES_CACHE, _CONDITIONS_CACHE
-    if _WEATHER_CODES_CACHE is None:
-        with open(_WEATHER_CODES_PATH) as f:
-            codes = json.load(f)
-        _WEATHER_CODES_CACHE = codes
-        _CONDITIONS_CACHE = codes.get("conditions", {})
-    return _WEATHER_CODES_CACHE, _CONDITIONS_CACHE
+def load_weather_codes() -> None:
+    """Load weather code mappings from JSON (called once at startup)."""
+    global weather_code_mapping, condition_mapping
+    with open(_WEATHER_CODES_PATH) as f:
+        codes = json.load(f)
+    weather_code_mapping = codes
+    condition_mapping = codes.get("conditions", {})
 
 
 @dataclass
@@ -480,8 +478,7 @@ def aggregate_weather(data: List[WeatherData]) -> Dict:
 
 def _map_wmo_code(code: int) -> str:
     """Map WMO weather codes to readable conditions."""
-    codes, _ = _load_weather_codes()
-    for range_def in codes["wmo"]["ranges"]:
+    for range_def in weather_code_mapping["wmo"]["ranges"]:
         if range_def["min"] <= code <= range_def["max"]:
             return range_def["condition"]
     return "Unknown"
@@ -493,8 +490,7 @@ def _map_tomorrow_code(code: str) -> str:
         code_str = str(int(code))
     except (ValueError, TypeError):
         return "Unknown"
-    codes, _ = _load_weather_codes()
-    return codes["tomorrow_io"].get(code_str, "Unknown")
+    return weather_code_mapping["tomorrow_io"].get(code_str, "Unknown")
 
 
 def normalize_condition(condition: str) -> str:
@@ -503,7 +499,6 @@ def normalize_condition(condition: str) -> str:
     Checks more specific patterns first (e.g., 'Partly Cloudy' before 'Cloudy').
     """
     lower = condition.lower()
-    _, conditions = _load_weather_codes()
 
     # Check in priority order (most specific first)
     condition_order = [
@@ -517,8 +512,8 @@ def normalize_condition(condition: str) -> str:
     ]
 
     for normalized in condition_order:
-        if normalized in conditions:
-            if any(kw in lower for kw in conditions[normalized]["keywords"]):
+        if normalized in condition_mapping:
+            if any(kw in lower for kw in condition_mapping[normalized]["keywords"]):
                 return normalized
 
     return condition
@@ -527,8 +522,7 @@ def normalize_condition(condition: str) -> str:
 def get_condition_emoji(condition: str) -> str:
     """Map condition to emoji. Returns thermometer if no match."""
     lower = condition.lower()
-    _, conditions = _load_weather_codes()
-    for normalized, info in conditions.items():
+    for normalized, info in condition_mapping.items():
         if normalized.lower() in lower:
             return info["emoji"]
         if any(kw in lower for kw in info["keywords"]):

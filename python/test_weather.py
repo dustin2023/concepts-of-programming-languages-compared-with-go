@@ -8,7 +8,12 @@ from weather import (
     normalize_condition,
     OpenMeteoSource,
     fetch_weather_concurrently,
+    load_weather_codes,
 )
+
+
+# Load weather codes once before all tests
+load_weather_codes()
 
 
 class TestAggregateWeather:

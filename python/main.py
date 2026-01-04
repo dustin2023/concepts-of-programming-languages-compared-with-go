@@ -18,6 +18,7 @@ from weather import (
     get_condition_emoji,
     init_sources,
     normalize_source,
+    load_weather_codes,
 )
 
 
@@ -54,22 +55,26 @@ def display_results(data: List[WeatherData]) -> None:
     emoji = get_condition_emoji(agg["condition"])
 
     print(f"\n📊 Aggregated ({agg['valid_count']}/{len(data)} valid):")
-
     if agg["valid_count"] > 0:
         print(f"→ Avg Temperature: {agg['avg_temp']:.2f}°C")
-
         if agg["hum_count"] > 0:
-            print(f"→ Avg Humidity:{agg['avg_hum']:.1f}%")
+            print(f"→ Avg Humidity:     {agg['avg_hum']:.1f}%")
         else:
-            print(f"→ Avg Humidity: N/A (no sources)")
-
-        print(f"→ Consensus: {agg['condition']} {emoji}")
+            print(f"→ Avg Humidity:     N/A (no sources)")
+        print(f"→ Consensus:        {agg['condition']} {emoji}")
     else:
         print("→ No valid data available")
 
 
 async def main() -> int:
     load_dotenv()
+
+    # Load weather code mappings once (like Go, fail-fast if file missing)
+    try:
+        load_weather_codes()
+    except Exception as e:
+        print(f"Error loading weather codes: {e}", file=sys.stderr)
+        return 1
 
     parser = argparse.ArgumentParser(
         description="Weather Data Aggregator",
@@ -100,13 +105,12 @@ async def main() -> int:
             "Error: Invalid city name. Use letters (including ü, é, ñ), numbers, spaces, hyphens, apostrophes, and periods.",
             file=sys.stderr,
         )
-        print(
-            "\nUsage: python main.py --city <city> [--sequential] [--exclude source1,source2]"
-        )
+        print("\nUsage: python main.py --city <city> [OPTIONS]")
+        print("\nOptions:")
         print("  --city       City name (required, spaces allowed)")
         print("  --sequential Use sequential fetching instead of concurrent (optional)")
         print("  --exclude    Comma-separated source names to skip (optional)")
-        print("\nExamples: --city Berlin")
+        print("\nExamples:")
         print("  ./main.py --city New York")
         print("  ./main.py --city \"O'Brien\"   # apostrophe needs double-quotes in the shell")
         print("  ./main.py --city Berlin --exclude WeatherAPI.com")

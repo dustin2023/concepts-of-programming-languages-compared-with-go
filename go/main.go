@@ -65,6 +65,12 @@ func displayResults(data []WeatherData) {
 func main() {
 	_ = godotenv.Load("../.env")
 
+		// Load weather code mappings once (needed for all sources)
+	if err := loadWeatherCodes(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading weather codes: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Parse command-line flags
 	city := flag.String("city", "", "City name (required, spaces allowed)")
 	seq := flag.Bool("sequential", false, "Use sequential fetching for performance comparison")
@@ -128,12 +134,6 @@ func main() {
 		fmt.Println("  ./weather-aggregator --city \"O'Brien\"    # apostrophe needs double-quotes in the shell")
 		fmt.Println("  ./weather-aggregator --city Berlin --exclude WeatherAPI.com")
 		fmt.Println("\nAPI keys are loaded from .env file.")
-		os.Exit(1)
-	}
-
-	// Load weather code mappings once (needed for all sources, not nur Open-Meteo)
-	if err := loadWeatherCodes(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading weather codes: %v\n", err)
 		os.Exit(1)
 	}
 
