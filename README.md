@@ -21,7 +21,18 @@ The goal was to see how each language handles the same real-world problem: makin
 
 ## Quick Start
 
-Run from the repository root using the included helper script:
+Run from the repository root. First-time setup:
+
+```bash
+# create venv once
+python3 -m venv python/venv
+source python/venv/bin/activate
+pip install -r python/requirements.txt
+
+# Go dependencies are fetched automatically by Go modules (go.mod/go.sum)
+```
+
+Then use the helper script (with the venv activated for Python):
 
 ```bash
 # Run Go version (default)
@@ -41,8 +52,8 @@ This script automatically builds the Go binary if needed. For Python, activate y
 ## Setup
 
 ### Prerequisites
-- Go 1.21+ ([download](https://go.dev/doc/install))
-- Python 3.11+ ([download](https://www.python.org/downloads/))
+- Go 1.23+ ([download](https://go.dev/doc/install))
+- Python 3.13+ ([download](https://www.python.org/downloads/))
 - API keys (optional, see below)
 
 ### API Keys (Optional, required for all 5 sources)
@@ -382,9 +393,6 @@ Each API returns weather conditions differently (WMO numeric codes, Tomorrow.io 
 ### 4. Unicode Input Validation
 Supporting international city names (München, São Paulo) meant dealing with Unicode properly. Regular expressions needed `\p{L}` (Go) or `re.UNICODE` (Python). Also had to handle shell escaping for city names with apostrophes or quotes.
 
-### 5. Making Concurrency Actually Concurrent
-Initial Python version didn't see speedup because I was accidentally calling sync functions in the async code. Had to use `aiohttp` instead of `requests` and ensure everything in the call chain was async-compatible. Go was simpler here - just prefix function calls with `go` and use channels.
-
 ## Design Decisions
 
 **Why implement in both languages?**  
@@ -397,10 +405,10 @@ Weather data from 3/5 sources is better than no data. Free APIs are unreliable -
 Some APIs need lat/lon instead of city names. Geocoding 5 times for the same city is wasteful and slower. Cache coordinates after first lookup, share across all sources.
 
 **Why JSON for weather codes?**  
-Each API uses different formats (WMO codes 0-99, Tomorrow.io "1000"/"1001", plain strings). Needed a way to map everything to unified categories without hardcoding. JSON file makes it easy to update mappings without recompiling.
+Each API uses different formats (WMO codes 0-99, Tomorrow.io "1000"/"1001", plain strings). Needed a way to map everything to unified categories without hardcoding. JSON file makes it easy to update mappings without recompiling - central for both languages.
 
 **Why is the code above the ~500 LOC guideline?**  
-I intentionally added more APIs (five sources in both languages) to make the comparison meaningful. Each adapter, plus shared weather-code mapping and validation, adds boilerplate. **Acknowledgement:** the current combined size (~1,760 LOC) exceeds the ~1,000 LOC guideline; a planned reduction to 3 sources (Open-Meteo + two key-based) would bring the project back within scope without losing the concurrency comparison value.
+I intentionally added more APIs (five sources in both languages) to make the comparison meaningful. Each adapter, plus shared weather-code mapping and validation, adds boilerplate. **Acknowledgement:** the current combined size exceeds the ~1,000 LOC guideline; a planned reduction to 3 sources (Open-Meteo + two key-based) would bring the project back within scope without losing the concurrency comparison value.
 
 **Go vs Python trade-offs observed:**
 - Go: Simpler concurrency (goroutines just work), faster, single binary. But more verbose, less flexible types.
@@ -411,20 +419,22 @@ I intentionally added more APIs (five sources in both languages) to make the com
 
 Single-run measurements from the repository root using `./weather-service`, with all five sources enabled via `.env` and an active Python virtual environment:
 
-| Mode | Go (time) | Python (time) | Winner |
-|------|-----------|---------------|---------|
-| Concurrent (default) | 0.81s (`./weather-service go --city Berlin`) | 0.57s (`./weather-service python --city Berlin`) | Python ~1.4x faster |
-| Sequential (`--sequential`) | 1.51s | 1.94s | Go ~1.3x faster |
-| Speedup from concurrency | 1.87x | 3.44x | Python benefits more |
+| Mode | Go (time) | Python (time) | Difference |
+|------|-----------|---------------|------------|
+| Concurrent (default) | 0.637s (`./weather-service go --city Berlin`) | 0.792s (`./weather-service python --city Berlin`) | Go 1.24× faster (~20%) |
+| Sequential (`--sequential`) | 1.432s | 1.564s | Go 1.09× faster (~8%) |
+| Speedup from concurrency | 2.25× | 1.98× | Go benefits more (~14% higher speedup) |
 
 **Observations:**
-- With all five sources active, Python's asyncio achieves the best concurrent time; Go remains faster in sequential mode.
-- Concurrency provides larger gains in Python (3.44x) because the event loop hides I/O latency effectively.
+- **No clear winner**: Performance varies by run and network conditions. Sometimes Go is faster (as shown above), sometimes Python edges ahead.
+- Both implementations handle I/O-bound work efficiently: Go with goroutines, Python with asyncio.
+- Concurrency provides significant speedup in both languages (1.98×–2.25×), demonstrating that the concurrency model matters more than raw language speed for network requests.
 - Results are network-dependent; rerun the commands above to reproduce on your machine. Measurements taken on macOS (M1 Pro), stable broadband, `.env` with API keys present.
 
 ## References
 
 Key resources used:
+- Course materials: Concepts of Programming Languages (https://github.com/s-macke/concepts-of-programming-languages/tree/master)
 - Rob Pike: "Concurrency is not Parallelism" (https://go.dev/blog/waza-talk)
 - Python asyncio docs (https://docs.python.org/3/library/asyncio.html)
 - Go net/http docs (https://pkg.go.dev/net/http) 
