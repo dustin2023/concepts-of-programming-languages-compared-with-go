@@ -95,7 +95,7 @@ graph LR
     D -->|Concurrent| E[Parallel Execution]
     D -->|Sequential| F[Sequential Execution]
     
-    E --> G[Weather Sources<br/>5 APIs \(parallel\)]
+    E --> G[Weather Sources<br/>5 APIs &#40;parallel&#41;]
     F --> G
     
     G --> H[Response Parser &<br/>Code Normalizer]
