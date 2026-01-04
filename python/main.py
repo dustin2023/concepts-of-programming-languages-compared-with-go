@@ -3,7 +3,6 @@
 
 import argparse
 import asyncio
-import os
 import re
 import sys
 import time
@@ -13,41 +12,14 @@ from dotenv import load_dotenv
 
 from weather import (
     WeatherData,
-    OpenMeteoSource,
-    TomorrowIOSource,
-    WeatherAPISource,
-    MeteosourceSource,
-    PirateWeatherSource,
     fetch_weather_concurrently,
     fetch_weather_sequentially,
     aggregate_weather,
     get_condition_emoji,
+    init_sources,
+    normalize_source,
     MAX_CITY_NAME_LENGTH,
 )
-
-
-def _normalize_source(name: str) -> str:
-    return name.replace(" ", "").replace("-", "").replace(".", "").lower()
-
-
-def init_sources() -> list:
-    """Initialize weather sources (free + API-key sources if configured)."""
-    sources = [OpenMeteoSource()]
-
-    # Add API-key sources if keys are available
-    if key := os.getenv("TOMORROW_API_KEY"):
-        sources.append(TomorrowIOSource(key))
-
-    if key := os.getenv("WEATHER_API_COM_KEY"):
-        sources.append(WeatherAPISource(key))
-
-    if key := os.getenv("METEOSOURCE_API_KEY"):
-        sources.append(MeteosourceSource(key))
-
-    if key := os.getenv("PIRATE_WEATHER_API_KEY"):
-        sources.append(PirateWeatherSource(key))
-
-    return sources
 
 
 def validate_city_name(city: str) -> Optional[str]:
@@ -148,9 +120,9 @@ async def main() -> int:
     if args.exclude:
         exclude_raw = " ".join(args.exclude)
         excluded_names = {
-            _normalize_source(name.strip()) for name in exclude_raw.split(",")
+            normalize_source(name.strip()) for name in exclude_raw.split(",")
         }
-        sources = [s for s in sources if _normalize_source(s.name) not in excluded_names]
+        sources = [s for s in sources if normalize_source(s.name) not in excluded_names]
 
     if not sources:
         print("Error: All sources were excluded", file=sys.stderr)

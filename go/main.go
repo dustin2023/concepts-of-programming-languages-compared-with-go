@@ -11,33 +11,6 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// initSources creates all available weather sources.
-func initSources() []WeatherSource {
-	sources := []WeatherSource{&OpenMeteoSource{}}
-
-	addSource := func(envKey string, create func(string) WeatherSource) {
-		if val := os.Getenv(envKey); val != "" {
-			sources = append(sources, create(val))
-		}
-	}
-
-	addSource("TOMORROW_API_KEY", func(k string) WeatherSource { return &TomorrowIOSource{apiKey: k} })
-	addSource("WEATHER_API_COM_KEY", func(k string) WeatherSource { return &WeatherAPISource{k} })
-	addSource("METEOSOURCE_API_KEY", func(k string) WeatherSource { return &MeteosourceSource{k} })
-	addSource("PIRATE_WEATHER_API_KEY", func(k string) WeatherSource { return &PirateWeatherSource{k} })
-
-	return sources
-}
-
-// normalizeSourceName lowercases and removes spaces/dashes/dots for comparison
-func normalizeSourceName(name string) string {
-	n := strings.ToLower(name)
-	n = strings.ReplaceAll(n, " ", "")
-	n = strings.ReplaceAll(n, "-", "")
-	n = strings.ReplaceAll(n, ".", "")
-	return n
-}
-
 func validateCityName(city string) (string, error) {
 	trimmed := strings.TrimSpace(city)
 	if trimmed == "" {

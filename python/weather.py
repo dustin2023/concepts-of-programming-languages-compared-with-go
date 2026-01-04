@@ -3,6 +3,7 @@
 import asyncio
 import aiohttp
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -142,6 +143,31 @@ async def get_coordinates(
     if coords_cache and city in coords_cache:
         return coords_cache[city]
     return await geocode_city(city, session)
+
+
+def normalize_source(name: str) -> str:
+    """Normalize source name: lowercase, remove spaces/dashes/dots."""
+    return name.replace(" ", "").replace("-", "").replace(".", "").lower()
+
+
+def init_sources() -> list:
+    """Initialize weather sources (free + API-key sources if configured)."""
+    sources = [OpenMeteoSource()]
+
+    # Add API-key sources if keys are available
+    if key := os.getenv("TOMORROW_API_KEY"):
+        sources.append(TomorrowIOSource(key))
+
+    if key := os.getenv("WEATHER_API_COM_KEY"):
+        sources.append(WeatherAPISource(key))
+
+    if key := os.getenv("METEOSOURCE_API_KEY"):
+        sources.append(MeteosourceSource(key))
+
+    if key := os.getenv("PIRATE_WEATHER_API_KEY"):
+        sources.append(PirateWeatherSource(key))
+
+    return sources
 
 
 class BaseAPISource:

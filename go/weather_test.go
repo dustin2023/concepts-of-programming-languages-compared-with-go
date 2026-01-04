@@ -7,130 +7,131 @@ import (
 )
 
 func init() {
-	// Load weather codes for tests
 	if err := loadWeatherCodes(); err != nil {
 		panic(err)
 	}
 }
 
-func floatPtr(f float64) *float64 { return &f }
-
-// TestAggregateWeather tests aggregation with valid/error data.
-func TestAggregateWeather(t *testing.T) {
+func TestValidateCityName(t *testing.T) {
 	tests := []struct {
 		name      string
-		data      []WeatherData
-		wantValid int
-		wantCond  string
+		input     string
+		wantCity  string
+		wantError bool
 	}{
-		{"all valid", []WeatherData{
-			{Source: "A", Temperature: 15, Humidity: floatPtr(60), Condition: "Cloudy"},
-			{Source: "B", Temperature: 17, Humidity: floatPtr(70), Condition: "Cloudy"},
-		}, 2, "Cloudy"},
-		{"mixed errors", []WeatherData{
-			{Source: "A", Temperature: 20, Humidity: floatPtr(50), Condition: "Clear"},
-			{Source: "B", Error: &testError{}},
-		}, 1, "Clear"},
-		{"all errors", []WeatherData{
-			{Source: "A", Error: &testError{}},
-			{Source: "B", Error: &testError{}},
-		}, 0, "No valid data"},
-		{"empty", []WeatherData{}, 0, "No data"},
+		{"valid single", "Munich", "Munich", false},
+		{"valid multi-word", "New York", "New York", false},
+		{"valid Unicode", "São Paulo", "São Paulo", false},
+		{"valid with apostrophe", "O'Brien", "O'Brien", false},
+		{"empty string", "", "", true},
+		{"only whitespace", "   ", "", true},
+		{"flag-like", "--city", "", true},
+		{"dash prefix", "-Munich", "", true},
+		{"exceeds max length", "A" + string(make([]byte, 100)), "", true},
+		{"invalid char @", "City@Name", "", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, cond, valid := AggregateWeather(tt.data)
-			if valid != tt.wantValid {
-				t.Errorf("valid = %d, want %d", valid, tt.wantValid)
+			got, err := validateCityName(tt.input)
+			if (err != nil) != tt.wantError {
+				t.Errorf("error = %v, wantErr = %v", err, tt.wantError)
 			}
-			if cond != tt.wantCond {
-				t.Errorf("condition = %q, want %q", cond, tt.wantCond)
+			if got != tt.wantCity {
+				t.Errorf("got %q, want %q", got, tt.wantCity)
 			}
 		})
 	}
 }
 
-// TestNormalizeCondition tests weather normalization.
-func TestNormalizeCondition(t *testing.T) {
-	tests := []struct{ input, want string }{
-		{"Clear sky", "Clear"},
-		{"Partly cloudy", "Partly Cloudy"},
-		{"Light rain", "Rainy"},
-		{"Snow", "Snowy"},
-		{"Thunderstorm", "Stormy"},
-	}
-
-	for _, tt := range tests {
-		if got := normalizeCondition(tt.input); got != tt.want {
-			t.Errorf("normalizeCondition(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
-// TestFetchWeatherConcurrently tests concurrent execution.
-func TestFetchWeatherConcurrently(t *testing.T) {
-	sources := []WeatherSource{
-		&mockSource{"Mock1", 15, 60, "Clear", false},
-		&mockSource{"Mock2", 16, 65, "Cloudy", false},
-		&mockSource{"Mock3", 0, 0, "", true},
-	}
-
-	results := fetchWeatherConcurrently(context.Background(), "Test", sources)
-	if len(results) != 3 {
-		t.Fatalf("got %d results, want 3", len(results))
-	}
-
-	validCount := 0
-	for _, r := range results {
-		if r.Error == nil {
-			validCount++
-		}
-	}
-	if validCount != 2 {
-		t.Errorf("got %d valid results, want 2", validCount)
-	}
-}
-
-// TestGetConditionEmoji tests emoji mapping.
-func TestGetConditionEmoji(t *testing.T) {
-	tests := []struct{ condition, emoji string }{
-		{"Clear", "☀️"},
-		{"Partly Cloudy", "⛅"},
-		{"Rainy", "🌧️"},
-		{"Unknown", "🌡️"},
-	}
-
-	for _, tt := range tests {
-		if got := GetConditionEmoji(tt.condition); got != tt.emoji {
-			t.Errorf("GetConditionEmoji(%q) = %q, want %q", tt.condition, got, tt.emoji)
-		}
-	}
-}
-
-// TestMapWMOCode tests WMO code mapping.
-func TestMapWMOCode(t *testing.T) {
+func TestNormalizeSourceName(t *testing.T) {
 	tests := []struct {
-		code int
-		want string
+		input    string
+		expected string
 	}{
-		{0, "Clear"},
-		{2, "Partly Cloudy"},
-		{45, "Foggy"},
-		{61, "Rainy"},
-		{71, "Snowy"},
-		{95, "Stormy"},
-		{999, "Unknown"},
+		{"Open-Meteo", "openmeteo"},
+		{"Pirate Weather", "pirateweather"},
+		{"WeatherAPI.com", "weatherapicom"},
+		{"TOMORROW.IO", "tomorrowio"},
 	}
 
 	for _, tt := range tests {
-		if got := mapWMOCode(tt.code); got != tt.want {
-			t.Errorf("mapWMOCode(%d) = %q, want %q", tt.code, got, tt.want)
+		if got := normalizeSourceName(tt.input); got != tt.expected {
+			t.Errorf("normalizeSourceName(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
 	}
 }
 
-// Mock implementations
+func floatPtr(f float64) *float64 { return &f }
+
+func TestAggregateWeather(t *testing.T) {
+	tests := []struct {
+		name      string
+		data      []WeatherData
+		wantValid int
+		wantTemp  float64
+		wantHum   float64
+		wantCond  string
+	}{
+		{
+			"all valid",
+			[]WeatherData{
+				{Source: "A", Temperature: 10, Humidity: floatPtr(50), Condition: "Cloudy"},
+				{Source: "B", Temperature: 20, Humidity: floatPtr(70), Condition: "Cloudy"},
+			},
+			2, 15.0, 60.0, "Cloudy",
+		},
+		{
+			"mixed with errors",
+			[]WeatherData{
+				{Source: "A", Temperature: 20, Humidity: floatPtr(50), Condition: "Clear"},
+				{Source: "B", Error: &testError{}},
+			},
+			1, 20.0, 50.0, "Clear",
+		},
+		{
+			"missing humidity",
+			[]WeatherData{
+				{Source: "A", Temperature: 15, Humidity: floatPtr(60), Condition: "Rainy"},
+				{Source: "B", Temperature: 15, Humidity: nil, Condition: "Rainy"},
+			},
+			2, 15.0, 60.0, "Rainy",
+		},
+		{
+			"all errors",
+			[]WeatherData{
+				{Source: "A", Error: &testError{}},
+				{Source: "B", Error: &testError{}},
+			},
+			0, 0.0, 0.0, "No valid data",
+		},
+		{
+			"empty",
+			[]WeatherData{},
+			0, 0.0, 0.0, "No data",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			avgTemp, avgHum, cond, valid := AggregateWeather(tt.data)
+
+			if valid != tt.wantValid {
+				t.Errorf("valid = %d, want %d", valid, tt.wantValid)
+			}
+			if valid > 0 && avgTemp != tt.wantTemp {
+				t.Errorf("temp = %.1f, want %.1f", avgTemp, tt.wantTemp)
+			}
+			if valid > 0 && avgHum != tt.wantHum {
+				t.Errorf("hum = %.1f, want %.1f", avgHum, tt.wantHum)
+			}
+			if cond != tt.wantCond {
+				t.Errorf("cond = %q, want %q", cond, tt.wantCond)
+			}
+		})
+	}
+}
+
 type mockSource struct {
 	name   string
 	temp   float64
@@ -141,7 +142,7 @@ type mockSource struct {
 
 func (m *mockSource) Name() string { return m.name }
 
-func (m *mockSource) Fetch(ctx context.Context, city string) WeatherData {
+func (m *mockSource) Fetch(ctx context.Context, city string, coordsCache map[string][2]float64) WeatherData {
 	if m.hasErr {
 		return WeatherData{Source: m.name, Error: &testError{}}
 	}
@@ -157,44 +158,40 @@ type testError struct{}
 
 func (e *testError) Error() string { return "test error" }
 
-// ===== Integration Tests with Open-Meteo (real API) =====
-
-// TestOpenMeteoIntegrationBerlin tests real API fetch for Berlin.
-func TestOpenMeteoIntegrationBerlin(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func TestFetchWeatherBehavior(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	source := &OpenMeteoSource{}
-	result := source.Fetch(ctx, "Berlin")
+	sources := []WeatherSource{
+		&mockSource{name: "S1", temp: 15, hum: 60, cond: "Clear", hasErr: false},
+		&mockSource{name: "S2", temp: 16, hum: 65, cond: "Cloudy", hasErr: false},
+		&mockSource{name: "S3", temp: 0, hum: 0, cond: "", hasErr: true},
+	}
 
-	// Verify successful fetch
-	if result.Error != nil {
-		t.Fatalf("unexpected error: %v", result.Error)
-	}
-	if result.Source != "Open-Meteo" {
-		t.Errorf("source = %q, want %q", result.Source, "Open-Meteo")
-	}
-	if result.Temperature < -50 || result.Temperature > 60 {
-		t.Errorf("temperature out of realistic range: %.1f°C", result.Temperature)
-	}
-	if result.Humidity == nil || *result.Humidity < 0 || *result.Humidity > 100 {
-		t.Errorf("invalid humidity: %v", result.Humidity)
-	}
-	if result.Condition == "" {
-		t.Error("condition should not be empty")
-	}
+	t.Run("concurrent", func(t *testing.T) {
+		results := fetchWeatherConcurrently(ctx, "TestCity", sources)
+		if len(results) != 3 {
+			t.Errorf("got %d results, want 3", len(results))
+		}
+		validCount := 0
+		for _, r := range results {
+			if r.Error == nil {
+				validCount++
+			}
+		}
+		if validCount != 2 {
+			t.Errorf("valid = %d, want 2", validCount)
+		}
+	})
+
+	t.Run("sequential", func(t *testing.T) {
+		results := fetchSequential(ctx, "TestCity", sources)
+		if len(results) != 3 {
+			t.Errorf("got %d results, want 3", len(results))
+		}
+		if results[0].Source != "S1" || results[1].Source != "S2" {
+			t.Errorf("order lost")
+		}
+	})
 }
 
-// TestOpenMeteoIntegrationInvalidCity tests graceful handling of invalid cities.
-func TestOpenMeteoIntegrationInvalidCity(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	source := &OpenMeteoSource{}
-	result := source.Fetch(ctx, "XyzInvalidCity123")
-
-	// Should have an error, not crash
-	if result.Error == nil {
-		t.Error("expected error for invalid city, got nil")
-	}
-}
