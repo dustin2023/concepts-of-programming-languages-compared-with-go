@@ -40,7 +40,7 @@ condition_mapping: dict = {}
 
 
 def load_weather_codes() -> None:
-    """Load weather code mappings from JSON (called once at startup)."""
+    """Load weather code mappings from JSON."""
     global weather_code_mapping, condition_mapping
     with open(_WEATHER_CODES_PATH) as f:
         codes = json.load(f)
@@ -71,6 +71,31 @@ class WeatherSource(Protocol):
         session: aiohttp.ClientSession,
         coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData: ...
+
+
+def init_sources() -> list:
+    """Initialize weather sources (free + API-key sources if configured)."""
+    sources = [OpenMeteoSource()]
+
+    # Add API-key sources if keys are available
+    if key := os.getenv("TOMORROW_API_KEY"):
+        sources.append(TomorrowIOSource(key))
+
+    if key := os.getenv("WEATHER_API_COM_KEY"):
+        sources.append(WeatherAPISource(key))
+
+    if key := os.getenv("METEOSOURCE_API_KEY"):
+        sources.append(MeteosourceSource(key))
+
+    if key := os.getenv("PIRATE_WEATHER_API_KEY"):
+        sources.append(PirateWeatherSource(key))
+
+    return sources
+
+
+def normalize_source(name: str) -> str:
+    """Normalize source name: lowercase, remove spaces/dashes/dots."""
+    return name.replace(" ", "").replace("-", "").replace(".", "").lower()
 
 
 async def http_get_json(url: str, session: aiohttp.ClientSession) -> dict:
@@ -142,44 +167,15 @@ async def get_coordinates(
     return await geocode_city(city, session)
 
 
-def normalize_source(name: str) -> str:
-    """Normalize source name: lowercase, remove spaces/dashes/dots."""
-    return name.replace(" ", "").replace("-", "").replace(".", "").lower()
-
-
-def init_sources() -> list:
-    """Initialize weather sources (free + API-key sources if configured)."""
-    sources = [OpenMeteoSource()]
-
-    # Add API-key sources if keys are available
-    if key := os.getenv("TOMORROW_API_KEY"):
-        sources.append(TomorrowIOSource(key))
-
-    if key := os.getenv("WEATHER_API_COM_KEY"):
-        sources.append(WeatherAPISource(key))
-
-    if key := os.getenv("METEOSOURCE_API_KEY"):
-        sources.append(MeteosourceSource(key))
-
-    if key := os.getenv("PIRATE_WEATHER_API_KEY"):
-        sources.append(PirateWeatherSource(key))
-
-    return sources
-
-
 class BaseAPISource:
     """Base class for API sources requiring authentication."""
 
     def __init__(self, api_key: str):
         self._api_key = api_key
 
-    def _check_api_key(self) -> Optional[str]:
-        """Check if API key is present. Returns error string if missing, None otherwise."""
-        return "API key required" if not self._api_key else None
-
 
 class OpenMeteoSource:
-    """Open-Meteo API - free, no key required."""
+    """Open-Meteo API - no key required."""
 
     name = "Open-Meteo"
 
@@ -232,8 +228,8 @@ class TomorrowIOSource(BaseAPISource):
         coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
-        if error := self._check_api_key():
-            result.error = error
+        if not self._api_key:
+            result.error = "API key required"
             return result
 
         try:
@@ -276,8 +272,8 @@ class WeatherAPISource(BaseAPISource):
         coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
-        if error := self._check_api_key():
-            result.error = error
+        if not self._api_key:
+            result.error = "API key required"
             return result
 
         try:
@@ -302,7 +298,7 @@ class WeatherAPISource(BaseAPISource):
 
 
 class MeteosourceSource(BaseAPISource):
-    """Meteosource API - requires key, may lack humidity on free tier."""
+    """Meteosource API - requires key, no available humidity on free tier."""
 
     name = "Meteosource"
 
@@ -313,8 +309,8 @@ class MeteosourceSource(BaseAPISource):
         coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
-        if error := self._check_api_key():
-            result.error = error
+        if not self._api_key:
+            result.error = "API key required"
             return result
 
         try:
@@ -346,7 +342,7 @@ class MeteosourceSource(BaseAPISource):
 
 
 class PirateWeatherSource(BaseAPISource):
-    """Pirate Weather API - Dark Sky compatible, requires key."""
+    """Pirate Weather API - requires key."""
 
     name = "Pirate-Weather"
 
@@ -357,8 +353,8 @@ class PirateWeatherSource(BaseAPISource):
         coords_cache: Optional[Dict[str, tuple[float, float]]] = None,
     ) -> WeatherData:
         result = WeatherData(source=self.name)
-        if error := self._check_api_key():
-            result.error = error
+        if not self._api_key:
+            result.error = "API key required"
             return result
 
         try:
@@ -391,7 +387,7 @@ async def _fetch_with_timing(
     session: aiohttp.ClientSession,
     coords_cache: Dict[str, tuple[float, float]],
 ) -> WeatherData:
-    """Fetch weather and measure duration."""
+    """Fetch weather from a source and measure duration."""
     start = time.perf_counter()
     result = await source.fetch(city, session, coords_cache)
     result.duration_ms = (time.perf_counter() - start) * 1000
@@ -409,8 +405,7 @@ async def fetch_weather_concurrently(
             coords = await geocode_city(city, session)
             coords_cache[city] = coords
         except GeocodingError:
-            pass  # Sources will try geocoding individually
-
+            pass
         tasks = [
             _fetch_with_timing(source, city, session, coords_cache)
             for source in sources
@@ -429,7 +424,7 @@ async def fetch_weather_sequentially(
             coords = await geocode_city(city, session)
             coords_cache[city] = coords
         except GeocodingError:
-            pass  # Sources will try geocoding individually
+            pass
 
         return [
             await _fetch_with_timing(source, city, session, coords_cache)

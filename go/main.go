@@ -107,13 +107,13 @@ func parseMultiWordArgs(cityFlag, excludeFlag string, seqFlag *bool) (city, excl
 func displayResults(data []WeatherData) {
 	for _, d := range data {
 		if d.Error != nil {
-			fmt.Printf("❌ %-18s ERROR: %v [%.0fms]\n", d.Source+":", d.Error, d.Duration.Seconds()*1000)
+			fmt.Printf("❌ %-18s ERROR: %v (%.0fms)\n", d.Source+":", d.Error, d.Duration.Seconds()*1000)
 		} else {
 			humStr := "N/A"
 			if d.Humidity != nil {
 				humStr = fmt.Sprintf("%.0f%%", *d.Humidity)
 			}
-			fmt.Printf("✅ %-18s %.1f°C, %s humidity, %s [%.0fms]\n", d.Source+":", d.Temperature, humStr, d.Condition, d.Duration.Seconds()*1000)
+			fmt.Printf("✅ %-18s %.1f°C, %s humidity, %s (%.0fms)\n", d.Source+":", d.Temperature, humStr, d.Condition, d.Duration.Seconds()*1000)
 		}
 	}
 
