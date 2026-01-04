@@ -239,50 +239,25 @@ sequenceDiagram
 
 The implementations use fundamentally different concurrency approaches:
 
-**Go: Goroutines and Channels (CSP-inspired)**
+**Go: CSP-inspired Goroutines and Channels**
 
-Go uses a CSP-inspired model with goroutines (lightweight threads) and channels for communication. Multiple goroutines can run in parallel across OS threads:
+- **Model**: Communicating Sequential Processes (CSP-inspired)
+- **Execution**: Goroutines are lightweight threads managed by the Go runtime scheduler
+- **Parallelism**: True parallelism - goroutines can run simultaneously on multiple CPU cores (M:N threading)
+- **Communication**: Typed channels for safe message passing between goroutines
+- **Scheduling**: Preemptive - the Go scheduler can pause/resume goroutines automatically
+- **Synchronization**: Blocking channel operations (`ch <- data`, `<-ch`)
 
-```go
-// Launch 5 goroutines that run concurrently
-ch := make(chan WeatherData, 5)
-for _, source := range sources {
-    go func(s WeatherSource) {
-        ch <- s.Fetch(ctx, city, coords)  // Send to channel
-    }(source)
-}
+**Python: asyncio Event Loop**
 
-// Main goroutine receives from all 5
-for i := 0; i < 5; i++ {
-    results = append(results, <-ch)  // Blocking receive
-}
-```
+- **Model**: Single-threaded event loop with cooperative multitasking
+- **Execution**: Coroutines scheduled by the event loop on a single thread
+- **Parallelism**: Concurrency without parallelism - tasks interleave but don't run simultaneously (GIL limitation)
+- **Communication**: Shared state, futures/promises, no built-in message passing
+- **Scheduling**: Cooperative - coroutines must explicitly `await` to yield control
+- **Synchronization**: `asyncio.gather()`, locks, events
 
-**Key characteristics:**
-- Goroutines are scheduled by Go runtime across multiple OS threads (true parallelism possible)
-- Communication via channels (type-safe message passing)
-- Can utilize multiple CPU cores simultaneously
-- Blocking channel operations for synchronization
-
-**Python: asyncio Event Loop (Single-threaded Cooperative Multitasking)**
-
-Python uses an event loop with coroutines that cooperatively yield control:
-
-```python
-# Create 5 async tasks
-tasks = [source.fetch(city, session, coords) for source in sources]
-
-# Event loop multiplexes between tasks on a single thread
-results = await asyncio.gather(*tasks)  # All run "concurrently" but not in parallel
-```
-
-**Key characteristics:**
-- Single-threaded: all coroutines run on one thread
-- Tasks explicitly yield control with `await` (cooperative)
-- Cannot utilize multiple CPU cores (GIL limitation)
-- Event loop switches between I/O operations
-
-**Key Architectural Differences:**
+**Architectural Comparison:**
 
 | Aspect | Go Implementation | Python Implementation |
 |--------|-------------------|----------------------|
