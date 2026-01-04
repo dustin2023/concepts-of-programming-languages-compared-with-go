@@ -193,4 +193,3 @@ func TestFetchWeatherBehavior(t *testing.T) {
 		}
 	})
 }
-

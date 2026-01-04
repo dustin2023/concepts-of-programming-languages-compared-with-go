@@ -4,11 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/joho/godotenv"
 	"os"
 	"regexp"
 	"strings"
 	"time"
-	"github.com/joho/godotenv"
 )
 
 func validateCityName(city string) (string, error) {
@@ -28,6 +28,35 @@ func validateCityName(city string) (string, error) {
 		return "", fmt.Errorf("Invalid city name. Allowed: letters (ü, é, ñ), digits, spaces, hyphens, apostrophes, periods")
 	}
 	return trimmed, nil
+}
+
+// printCityValidationError prints city validation error message and usage.
+func printCityValidationError(err error) {
+	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	fmt.Println("\nUsage: weather-aggregator --city <city> [OPTIONS]")
+	fmt.Println("\nOptions:")
+	fmt.Println("  --city       City name (required)")
+	fmt.Println("  --sequential Use sequential fetching (optional)")
+	fmt.Println("  --exclude    Comma-separated source names to skip (optional)")
+	fmt.Println("\nExamples:")
+	fmt.Println("  ./weather-aggregator --city New York")
+	fmt.Println("  ./weather-aggregator --city \"O'Brien\"    # apostrophe needs double-quotes in the shell")
+	fmt.Println("  ./weather-aggregator --city Berlin --exclude WeatherAPI.com")
+	fmt.Println("\nAPI keys are loaded from .env file.")
+}
+
+// parseFlags parses command-line flags and returns parsed city, exclude, and sequential values.
+func parseFlags() (city, exclude string, sequential bool) {
+	cityFlag := flag.String("city", "", "City name (required, spaces allowed)")
+	seqFlag := flag.Bool("sequential", false, "Use sequential fetching for performance comparison")
+	excludeFlag := flag.String("exclude", "", "Comma-separated source names to exclude (e.g., 'wttr.in,WeatherAPI.com')")
+	flag.Parse()
+
+	// Handle multi-word arguments
+	city, exclude = parseMultiWordArgs(*cityFlag, *excludeFlag, seqFlag)
+	sequential = *seqFlag
+
+	return city, exclude, sequential
 }
 
 // parseMultiWordArgs handles Python argparse-like behavior for multi-word arguments.
@@ -74,7 +103,6 @@ func parseMultiWordArgs(cityFlag, excludeFlag string, seqFlag *bool) (city, excl
 	return strings.Join(cityParts, " "), strings.Join(excludeParts, " ")
 }
 
-
 // displayResults prints per-source results and aggregated statistics.
 func displayResults(data []WeatherData) {
 	for _, d := range data {
@@ -115,39 +143,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Parse command-line flags
-	city := flag.String("city", "", "City name (required, spaces allowed)")
-	seq := flag.Bool("sequential", false, "Use sequential fetching for performance comparison")
-	exclude := flag.String("exclude", "", "Comma-separated source names to exclude (e.g., 'wttr.in,WeatherAPI.com')")
-	flag.Parse()
-
-	// Handle multi-word arguments
-	parsedCity, parsedExclude := parseMultiWordArgs(*city, *exclude, seq)
-	*city = parsedCity
-	*exclude = parsedExclude
+	city, exclude, sequential := parseFlags()
 
 	// Validate city input
-	cityName, err := validateCityName(*city)
+	cityName, err := validateCityName(city)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Println("\nUsage: weather-aggregator --city <city> [OPTIONS]")
-		fmt.Println("\nOptions:")
-		fmt.Println("  --city       City name (required)")
-		fmt.Println("  --sequential Use sequential fetching (optional)")
-		fmt.Println("  --exclude    Comma-separated source names to skip (optional)")
-		fmt.Println("\nExamples:")
-		fmt.Println("  ./weather-aggregator --city New York")
-		fmt.Println("  ./weather-aggregator --city \"O'Brien\"    # apostrophe needs double-quotes in the shell")
-		fmt.Println("  ./weather-aggregator --city Berlin --exclude WeatherAPI.com")
-		fmt.Println("\nAPI keys are loaded from .env file.")
+		printCityValidationError(err)
 		os.Exit(1)
 	}
 
 	allSources := initSources()
 
+	// Filter out excluded sources
 	excludedMap := make(map[string]bool)
-	if *exclude != "" {
-		for _, name := range strings.Split(*exclude, ",") {
+	if exclude != "" {
+		for _, name := range strings.Split(exclude, ",") {
 			n := strings.TrimSpace(name)
 			excludedMap[normalizeSourceName(n)] = true
 		}
@@ -175,7 +185,7 @@ func main() {
 	var data []WeatherData
 
 	// Choose execution strategy based on flag
-	if *seq {
+	if sequential {
 		data = fetchSequential(ctx, cityName, sources)
 	} else {
 		data = fetchWeatherConcurrently(ctx, cityName, sources)

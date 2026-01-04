@@ -37,7 +37,6 @@ var WeatherCodes WeatherCodeConfig
 var weatherCodesOnce sync.Once
 var weatherCodesErr error
 
-
 // WeatherData represents weather from a single source.
 // Temperature in Celsius, Humidity as percentage (0-100).
 type WeatherData struct {
@@ -104,7 +103,6 @@ func loadWeatherCodes() error {
 	})
 	return weatherCodesErr
 }
-
 
 // doGet creates request with context and returns response + duration.
 func doGet(ctx context.Context, url string) (*http.Response, time.Duration, error) {
@@ -305,6 +303,7 @@ func (w *WeatherAPISource) Fetch(ctx context.Context, city string, coordsCache m
 	res.Duration = time.Since(start)
 	return res
 }
+
 // MeteosourceSource - requires API key, may lack humidity on free tier.
 type MeteosourceSource struct{ key string }
 
@@ -473,7 +472,6 @@ func AggregateWeather(data []WeatherData) (avgTemp, avgHum float64, cond string,
 	return
 }
 
-
 // mapWMOCode converts WMO codes to readable conditions.
 func mapWMOCode(code int) string {
 	for _, r := range WeatherCodes.WMO.Ranges {
@@ -496,10 +494,10 @@ func mapTomorrowCode(code int) string {
 // Checks more specific patterns first (e.g., "Partly Cloudy" before "Cloudy").
 func normalizeCondition(c string) string {
 	lower := strings.ToLower(c)
-	
+
 	// Check in priority order (most specific first)
 	conditionOrder := []string{"Partly Cloudy", "Clear", "Cloudy", "Rainy", "Snowy", "Foggy", "Stormy"}
-	
+
 	for _, normalized := range conditionOrder {
 		if info, exists := WeatherCodes.Conditions[normalized]; exists {
 			for _, keyword := range info.Keywords {
