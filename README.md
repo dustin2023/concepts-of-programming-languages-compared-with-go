@@ -12,13 +12,13 @@ This project demonstrates and compares parallel programming concepts in **Go** a
 ### Unified Launcher (Recommended)
 ```bash
 # Run Go implementation (default)
-./weather --city Berlin
+./weather-service --city Berlin
 
 # Run Python implementation
-./weather python --city München
+./weather-service python --city München
 
 # Compare both implementations side-by-side
-./weather both --city "San Francisco"
+./weather-service both --city "San Francisco"
 ```
 
 

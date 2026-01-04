@@ -13,16 +13,16 @@ show_usage() {
 Weather Aggregator - Unified Launcher
 
 Usage: 
-  ./weather go [args...]       Run Go implementation
-  ./weather python [args...]   Run Python implementation
-  ./weather both [args...]     Run both implementations side-by-side
-  ./weather [args...]          Run Go implementation (default)
+  ./weather-service go [args...]       Run Go implementation
+  ./weather-service python [args...]   Run Python implementation
+  ./weather-service both [args...]     Run both implementations side-by-side
+  ./weather-service [args...]          Run Go implementation (default)
 
 Examples:
-  ./weather --city Berlin
-  ./weather go --city "New York" --sequential
-  ./weather python --city München --exclude WeatherAPI.com
-  ./weather both --city "San Francisco"
+  ./weather-service --city Berlin
+  ./weather-service go --city "New York" --sequential
+  ./weather-service python --city München --exclude WeatherAPI.com
+  ./weather-service both --city "San Francisco"
 
 EOF
 }
