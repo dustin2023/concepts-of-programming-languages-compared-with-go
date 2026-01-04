@@ -37,23 +37,6 @@ var WeatherCodes WeatherCodeConfig
 var weatherCodesOnce sync.Once
 var weatherCodesErr error
 
-// loadWeatherCodes loads weather code mappings from shared JSON file.
-// Uses sync.Once to ensure thread-safe single initialization.
-func loadWeatherCodes() error {
-	weatherCodesOnce.Do(func() {
-		path := filepath.Join("..", "weather_codes.json")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			weatherCodesErr = fmt.Errorf("failed to read weather_codes.json: %w", err)
-			return
-		}
-		if err := json.Unmarshal(data, &WeatherCodes); err != nil {
-			weatherCodesErr = fmt.Errorf("failed to parse weather_codes.json: %w", err)
-			return
-		}
-	})
-	return weatherCodesErr
-}
 
 // WeatherData represents weather from a single source.
 // Temperature in Celsius, Humidity as percentage (0-100).
@@ -72,25 +55,6 @@ type WeatherSource interface {
 	Name() string
 }
 
-// fetchWeatherConcurrently fetches from all sources in parallel using goroutines.
-// Pre-geocodes the city to reduce redundant API calls.
-func fetchWeatherConcurrently(ctx context.Context, city string, sources []WeatherSource) []WeatherData {
-	// Pre-geocode city once to avoid redundant calls from each source
-	coordsCache := make(map[string][2]float64)
-	if lat, lon, err := lookupLatLon(ctx, city); err == nil {
-		coordsCache[city] = [2]float64{lat, lon}
-	}
-
-	ch := make(chan WeatherData, len(sources))
-	for _, s := range sources {
-		go func(src WeatherSource) { ch <- src.Fetch(ctx, city) }(s)
-	}
-	results := make([]WeatherData, 0, len(sources))
-	for i := 0; i < len(sources); i++ {
-		results = append(results, <-ch)
-	}
-	return results
-}
 
 // client is a shared HTTP client with 10s timeout.
 var client = &http.Client{
@@ -196,24 +160,6 @@ func (o *OpenMeteoSource) Fetch(ctx context.Context, city string) WeatherData {
 	res.Condition = mapWMOCode(data.Current.Code)
 	res.Duration = time.Since(start)
 	return res
-}
-
-// mapWMOCode converts WMO codes to readable conditions.
-func mapWMOCode(code int) string {
-	for _, r := range WeatherCodes.WMO.Ranges {
-		if code >= r.Min && code <= r.Max {
-			return r.Condition
-		}
-	}
-	return "Unknown"
-}
-
-// mapTomorrowCode converts Tomorrow.io codes to readable conditions.
-func mapTomorrowCode(code int) string {
-	if condition := WeatherCodes.TomorrowIO[fmt.Sprintf("%d", code)]; condition != "" {
-		return condition
-	}
-	return "Unknown"
 }
 
 // TomorrowIOSource - requires API key, coordinate-based.
@@ -442,6 +388,45 @@ func (p *PirateWeatherSource) Fetch(ctx context.Context, city string) WeatherDat
 	return res
 }
 
+// fetchWeatherConcurrently fetches from all sources in parallel using goroutines.
+// Pre-geocodes the city to reduce redundant API calls.
+func fetchWeatherConcurrently(ctx context.Context, city string, sources []WeatherSource) []WeatherData {
+	// Pre-geocode city once to avoid redundant calls from each source
+	coordsCache := make(map[string][2]float64)
+	if lat, lon, err := lookupLatLon(ctx, city); err == nil {
+		coordsCache[city] = [2]float64{lat, lon}
+	}
+
+	ch := make(chan WeatherData, len(sources))
+	for _, s := range sources {
+		go func(src WeatherSource) { ch <- src.Fetch(ctx, city) }(s)
+	}
+	results := make([]WeatherData, 0, len(sources))
+	for i := 0; i < len(sources); i++ {
+		results = append(results, <-ch)
+	}
+	return results
+}
+
+
+// loadWeatherCodes loads weather code mappings from shared JSON file.
+// Uses sync.Once to ensure thread-safe single initialization.
+func loadWeatherCodes() error {
+	weatherCodesOnce.Do(func() {
+		path := filepath.Join("..", "weather_codes.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			weatherCodesErr = fmt.Errorf("failed to read weather_codes.json: %w", err)
+			return
+		}
+		if err := json.Unmarshal(data, &WeatherCodes); err != nil {
+			weatherCodesErr = fmt.Errorf("failed to parse weather_codes.json: %w", err)
+			return
+		}
+	})
+	return weatherCodesErr
+}
+
 
 // AggregateWeather calculates avg temp/humidity and consensus condition from valid data.
 func AggregateWeather(data []WeatherData) (avgTemp, avgHum float64, cond string, valid int) {
@@ -481,6 +466,25 @@ func AggregateWeather(data []WeatherData) (avgTemp, avgHum float64, cond string,
 		}
 	}
 	return
+}
+
+
+// mapWMOCode converts WMO codes to readable conditions.
+func mapWMOCode(code int) string {
+	for _, r := range WeatherCodes.WMO.Ranges {
+		if code >= r.Min && code <= r.Max {
+			return r.Condition
+		}
+	}
+	return "Unknown"
+}
+
+// mapTomorrowCode converts Tomorrow.io codes to readable conditions.
+func mapTomorrowCode(code int) string {
+	if condition := WeatherCodes.TomorrowIO[fmt.Sprintf("%d", code)]; condition != "" {
+		return condition
+	}
+	return "Unknown"
 }
 
 // normalizeCondition converts conditions to standard categories.
