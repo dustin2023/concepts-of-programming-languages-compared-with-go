@@ -87,35 +87,28 @@ The application follows a modular architecture with clear separation of concerns
 **Component Diagram:**
 
 ```mermaid
-graph TD
-    A[User Input<br/>(CLI)] --> B[Input Validation]
-    B --> C[Geocoding<br/>(Open-Meteo)]
-    C --> D[Coordinate Cache]
-    D --> E[Parallel Weather API Calls]
-    E --> F1[Open-Meteo]
-    E --> F2[Tomorrow.io]
-    E --> F3[WeatherAPI.com]
-    E --> F4[Meteosource]
-    E --> F5[Pirate Weather]
-    F1 --> G[Result Aggregator]
-    F2 --> G
-    F3 --> G
-    F4 --> G
-    F5 --> G
-    G --> H[Console Output]
+graph LR
+    A[CLI Entry Point] --> B[Input Validator]
+    B --> C[Geocoding Service]
+    C -->|Coordinates cached| D{Execution Mode}
+    
+    D -->|Concurrent| E[Parallel Execution]
+    D -->|Sequential| F[Sequential Execution]
+    
+    E --> G[Weather Sources<br/>5 APIs in parallel]
+    F --> G
+    
+    G --> H[Response Parser &<br/>Code Normalizer]
+    H --> I[Data Aggregator]
+    I --> J[Console Output]
     
     style A fill:#e1f5ff
-    style B fill:#e1f5ff
-    style C fill:#c8e6c9
-    style D fill:#c8e6c9
-    style E fill:#b3e5fc
-    style F1 fill:#fff9c4
-    style F2 fill:#fff9c4
-    style F3 fill:#fff9c4
-    style F4 fill:#fff9c4
-    style F5 fill:#fff9c4
-    style G fill:#f8bbd0
-    style H fill:#d1c4e9
+    style D fill:#fff3e0
+    style E fill:#c8e6c9
+    style F fill:#fff9c4
+    style G fill:#e3f2fd
+    style I fill:#f8bbd0
+    style J fill:#d1c4e9
 ```
 
 
