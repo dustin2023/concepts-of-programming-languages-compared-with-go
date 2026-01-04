@@ -16,19 +16,47 @@ func validateCityName(city string) (string, error) {
 	if trimmed == "" {
 		return "", fmt.Errorf("city name is required and cannot be empty")
 	}
-	// Prevent flag-like values (aligns behavior with Python CLI parsing)
-	if strings.HasPrefix(trimmed, "-") {
-		return "", fmt.Errorf("city name cannot start with '-'; did you mean to pass a flag?")
-	}
 	if len(trimmed) > 100 {
 		return "", fmt.Errorf("city name must not exceed 100 characters")
 	}
-	// Allow Unicode letters, digits, spaces, any dash, apostrophes, periods, underscore (aligns with Python \w)
+	// Allow Unicode letters, digits, spaces, any dash, apostrophes, periods, underscore
 	matched, _ := regexp.MatchString(`^[\p{L}0-9_\s\p{Pd}'\.]+$`, trimmed)
 	if !matched {
 		return "", fmt.Errorf("Invalid city name. Allowed: letters (ü, é, ñ), digits, spaces, hyphens, apostrophes, periods")
 	}
 	return trimmed, nil
+}
+
+
+// displayResults prints per-source results and aggregated statistics.
+func displayResults(data []WeatherData) {
+	for _, d := range data {
+		if d.Error != nil {
+			fmt.Printf("❌ %-18s ERROR: %v [%.0fms]\n", d.Source+":", d.Error, d.Duration.Seconds()*1000)
+		} else {
+			humStr := "N/A"
+			if d.Humidity != nil {
+				humStr = fmt.Sprintf("%.0f%%", *d.Humidity)
+			}
+			fmt.Printf("✅ %-18s %.1f°C, %s humidity, %s [%.0fms]\n", d.Source+":", d.Temperature, humStr, d.Condition, d.Duration.Seconds()*1000)
+		}
+	}
+
+	avgTemp, avgHum, cond, valid := AggregateWeather(data)
+	emoji := GetConditionEmoji(cond)
+
+	fmt.Printf("\n📊 Aggregated (%d/%d valid):\n", valid, len(data))
+	if valid > 0 {
+		fmt.Printf("→ Avg Temperature: %.2f°C\n", avgTemp)
+		if avgHum > 0 {
+			fmt.Printf("→ Avg Humidity:    %.1f%%\n", avgHum)
+		} else {
+			fmt.Printf("→ Avg Humidity:    N/A\n")
+		}
+		fmt.Printf("→ Consensus:       %s %s\n", cond, emoji)
+	} else {
+		fmt.Println("→ No valid data available")
+	}
 }
 
 func main() {
@@ -96,7 +124,6 @@ func main() {
 		fmt.Println("  ./weather-aggregator --city New York")
 		fmt.Println("  ./weather-aggregator --city \"O'Brien\"    # apostrophe needs double-quotes in the shell")
 		fmt.Println("  ./weather-aggregator --city Berlin --exclude WeatherAPI.com")
-		fmt.Println("  ./weather-aggregator --city \"São Paulo\" --sequential")
 		fmt.Println("\nAPI keys are loaded from .env file.")
 		os.Exit(1)
 	}
@@ -148,36 +175,4 @@ func main() {
 
 	fmt.Printf("⏱️  Completed in %.3fs\n\n", duration.Seconds())
 	displayResults(data)
-}
-
-
-// displayResults prints per-source results and aggregated statistics.
-func displayResults(data []WeatherData) {
-	for _, d := range data {
-		if d.Error != nil {
-			fmt.Printf("❌ %-18s ERROR: %v [%.0fms]\n", d.Source+":", d.Error, d.Duration.Seconds()*1000)
-		} else {
-			humStr := "N/A"
-			if d.Humidity != nil {
-				humStr = fmt.Sprintf("%.0f%%", *d.Humidity)
-			}
-			fmt.Printf("✅ %-18s %.1f°C, %s humidity, %s [%.0fms]\n", d.Source+":", d.Temperature, humStr, d.Condition, d.Duration.Seconds()*1000)
-		}
-	}
-
-	avgTemp, avgHum, cond, valid := AggregateWeather(data)
-	emoji := GetConditionEmoji(cond)
-
-	fmt.Printf("\n📊 Aggregated (%d/%d valid):\n", valid, len(data))
-	if valid > 0 {
-		fmt.Printf("→ Avg Temperature: %.2f°C\n", avgTemp)
-		if avgHum > 0 {
-			fmt.Printf("→ Avg Humidity:    %.1f%%\n", avgHum)
-		} else {
-			fmt.Printf("→ Avg Humidity:    N/A\n")
-		}
-		fmt.Printf("→ Consensus:       %s %s\n", cond, emoji)
-	} else {
-		fmt.Println("→ No valid data available")
-	}
 }

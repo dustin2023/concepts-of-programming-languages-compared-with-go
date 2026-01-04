@@ -18,7 +18,6 @@ from weather import (
     get_condition_emoji,
     init_sources,
     normalize_source,
-    MAX_CITY_NAME_LENGTH,
 )
 
 
@@ -29,7 +28,7 @@ def validate_city_name(city: str) -> Optional[str]:
     if not city:
         return None
 
-    if len(city) > MAX_CITY_NAME_LENGTH:
+    if len(city) > 100:
         return None
 
     # Allow Unicode letters (including umlauts, accents), numbers, spaces, hyphens, apostrophes, and periods
@@ -111,7 +110,6 @@ async def main() -> int:
         print("  ./main.py --city New York")
         print("  ./main.py --city \"O'Brien\"   # apostrophe needs double-quotes in the shell")
         print("  ./main.py --city Berlin --exclude WeatherAPI.com")
-        print("  ./main.py --city São Paulo --sequential")
         print("\nAPI keys are loaded from .env file.")
         return 1
 

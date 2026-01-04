@@ -11,7 +11,6 @@ from typing import List, Dict, Optional, Protocol
 from urllib.parse import quote
 
 # Configuration Constants
-MAX_CITY_NAME_LENGTH = 100
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10)
 
 
