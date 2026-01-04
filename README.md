@@ -326,16 +326,16 @@ pip install -r requirements.txt
 
 ## Tests
 
-Both implementations have test suites covering validation, aggregation, and weather code mapping.
+Both implementations have test suites covering validation, aggregation, and fetch weather behavior.
 
-**Go (4 test functions):**
+**Go (20 test functions):**
 ```bash
 cd go
 go test -v          # Run all tests
 go test -cover      # With coverage report
 ```
 
-**Python (7 test functions):**
+**Python (15 test functions):**
 ```bash
 cd python
 source venv/bin/activate
@@ -343,7 +343,7 @@ python -m pytest test_weather.py -v                    # Run all tests
 python -m pytest --cov=weather --cov-report=html      # With coverage
 ```
 
-**Note on test coverage:** The test suite focuses on core logic (input validation, aggregation, condition mapping, and orchestration) rather than exhaustive coverage of all API sources. This decision was made to stay within the recommended project scope (~500 lines per language). The tests use mocks for testing concurrency behavior and include integration tests for the free API source to validate real-world functionality.
+**Note on test coverage:** The test suite is deliberately focused on core logic (input validation, aggregation, weather data fetching, and orchestration) rather than exhaustively covering every API source. This approach was chosen to keep the implementation as close as possible to the recommended project scope. The tests use mocks to verify concurrency behavior and include integration tests for the free API source to ensure real-world functionality.
 
 ## Implementation Challenges
 
@@ -414,7 +414,6 @@ Key resources used:
 
 **Author**: Dustin Maurer   
 **Course**: Concepts of Programming Languages, Technical University of Applied Science Rosenheim  
-**Semester**: Winter 2025/2026  
 **Date**: January 2026
 
 
