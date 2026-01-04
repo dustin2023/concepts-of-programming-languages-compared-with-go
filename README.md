@@ -28,8 +28,6 @@ Run from the repository root. First-time setup:
 python3 -m venv python/venv
 source python/venv/bin/activate
 pip install -r python/requirements.txt
-
-# Go dependencies are fetched automatically by Go modules (go.mod/go.sum)
 ```
 
 Then use the helper script (with the venv activated for Python):
@@ -56,7 +54,7 @@ This script automatically builds the Go binary if needed. For Python, activate y
 - Python 3.13+ ([download](https://www.python.org/downloads/))
 - API keys (optional, see below)
 
-### API Keys (Optional, required for all 5 sources)
+### API Keys (Optional, required for 4 sources)
 
 The program works out of the box with just Open-Meteo (free, no key needed). To enable all other sources, create a `.env` file in the repo root:
 
@@ -188,7 +186,7 @@ sequenceDiagram
 
 4. **Concurrent/Sequential Fetching**
    
-   **Go Implementation** ([weather.go](go/weather.go)):
+   **Go Implementation Concurrent** ([weather.go](go/weather.go)):
    ```go
    // Buffered channel with capacity = number of sources
    ch := make(chan WeatherData, len(sources))
@@ -206,7 +204,7 @@ sequenceDiagram
    }
    ```
    
-   **Python Implementation** ([weather.py](python/weather.py)):
+   **Python Implementation Concurrent** ([weather.py](python/weather.py)):
    ```python
    # Create async tasks for all sources
    tasks = [
@@ -241,65 +239,60 @@ sequenceDiagram
 
 The implementations use fundamentally different concurrency approaches:
 
-**Go: Goroutines and Channels (CSP Model)**
+**Go: Goroutines and Channels (CSP-inspired)**
 
-```mermaid
-graph LR
-    Main[Main Goroutine] --> G1[Goroutine 1<br/>Open-Meteo]
-    Main --> G2[Goroutine 2<br/>Tomorrow.io]
-    Main --> G3[Goroutine 3<br/>WeatherAPI]
-    Main --> G4[Goroutine 4<br/>Meteosource]
-    Main --> G5[Goroutine 5<br/>Pirate Weather]
-    
-    G1 -->|Send| CH[Buffered Channel<br/>cap=5]
-    G2 -->|Send| CH
-    G3 -->|Send| CH
-    G4 -->|Send| CH
-    G5 -->|Send| CH
-    
-    CH -->|Receive 5x| Collect[Main Goroutine<br/>Collect Results]
-    Collect --> Agg[Aggregate]
-    
-    style Main fill:#e3f2fd
-    style CH fill:#fff9c4
-    style Collect fill:#c8e6c9
-    style Agg fill:#f8bbd0
+Go uses a CSP-inspired model with goroutines (lightweight threads) and channels for communication. Multiple goroutines can run in parallel across OS threads:
+
+```go
+// Launch 5 goroutines that run concurrently
+ch := make(chan WeatherData, 5)
+for _, source := range sources {
+    go func(s WeatherSource) {
+        ch <- s.Fetch(ctx, city, coords)  // Send to channel
+    }(source)
+}
+
+// Main goroutine receives from all 5
+for i := 0; i < 5; i++ {
+    results = append(results, <-ch)  // Blocking receive
+}
 ```
 
-**Python: asyncio Event Loop**
+**Key characteristics:**
+- Goroutines are scheduled by Go runtime across multiple OS threads (true parallelism possible)
+- Communication via channels (type-safe message passing)
+- Can utilize multiple CPU cores simultaneously
+- Blocking channel operations for synchronization
 
-```mermaid
-graph LR
-    Main[Main Coroutine] --> T1[Task 1<br/>Open-Meteo]
-    Main --> T2[Task 2<br/>Tomorrow.io]
-    Main --> T3[Task 3<br/>WeatherAPI]
-    Main --> T4[Task 4<br/>Meteosource]
-    Main --> T5[Task 5<br/>Pirate Weather]
-    
-    T1 -->|await| EL[Event Loop<br/>Single Thread]
-    T2 -->|await| EL
-    T3 -->|await| EL
-    T4 -->|await| EL
-    T5 -->|await| EL
-    
-    EL -->|asyncio.gather| Collect[Collect All Results]
-    Collect --> Agg[Aggregate]
-    
-    style Main fill:#e1f5ff
-    style EL fill:#fff3e0
-    style Collect fill:#c8e6c9
-    style Agg fill:#f8bbd0
+**Python: asyncio Event Loop (Single-threaded Cooperative Multitasking)**
+
+Python uses an event loop with coroutines that cooperatively yield control:
+
+```python
+# Create 5 async tasks
+tasks = [source.fetch(city, session, coords) for source in sources]
+
+# Event loop multiplexes between tasks on a single thread
+results = await asyncio.gather(*tasks)  # All run "concurrently" but not in parallel
 ```
+
+**Key characteristics:**
+- Single-threaded: all coroutines run on one thread
+- Tasks explicitly yield control with `await` (cooperative)
+- Cannot utilize multiple CPU cores (GIL limitation)
+- Event loop switches between I/O operations
 
 **Key Architectural Differences:**
 
 | Aspect | Go Implementation | Python Implementation |
 |--------|-------------------|----------------------|
-| **Parallelism** | True parallelism (M:N threading, goroutines scheduled across OS threads) | Cooperative multitasking (single-threaded event loop) |
-| **Communication** | Channels (CSP: Communicating Sequential Processes) | Futures/Promises (async/await pattern) |
-| **Scheduling** | Preemptive (Go scheduler can interrupt goroutines) | Cooperative (coroutine must explicitly `await` to yield) |
-| **Syntax** | Goroutines launched with `go func()`, channels with `make(chan)` | Coroutines defined with `async def`, awaited with `await` |
-| **Synchronization** | Channel send/receive operations, `sync.WaitGroup` | `asyncio.gather()`, event loop manages tasks |
+| **Concurrency Model** | CSP-inspired (goroutines + channels) | Event loop with coroutines (async/await) |
+| **Parallelism** | True parallelism: M:N threading, goroutines can run on multiple OS threads simultaneously | Cooperative multitasking: single thread, event loop multiplexes between tasks |
+| **Scheduling** | Preemptive: Go scheduler can pause goroutines at runtime | Cooperative: coroutine must explicitly `await` to yield control |
+| **Communication** | Channels (typed, blocking send/receive) | Shared state with futures/promises |
+| **Syntax** | `go func()` to launch, `<-chan` to receive | `async def` to define, `await` to yield |
+| **CPU Utilization** | Can use multiple cores (for CPU-bound work) | Single core only (GIL prevents parallel CPU work) |
+| **Best For** | CPU-bound tasks, high concurrency, low-latency services | I/O-bound tasks, network operations, simple async code |
 
 ## Running the Program
 
