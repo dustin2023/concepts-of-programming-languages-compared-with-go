@@ -159,7 +159,7 @@ sequenceDiagram
    - Rejects empty strings, excessive length (>100 chars), or invalid characters
    - Joins multi-word city names from command-line arguments
 
-2. **Source Initialization** ([weather.go](go/weather.go#L82-L96) / [weather.py](python/weather.py#L79-L96))
+2. **Source Initialization** ([weather.go](go/weather.go#L78-L94) / [weather.py](python/weather.py#L76-L93))
    - Loads weather code mappings from `weather_codes.json`
    - Initializes free sources (Open-Meteo)
    - Conditionally adds API-key sources if environment variables are present
