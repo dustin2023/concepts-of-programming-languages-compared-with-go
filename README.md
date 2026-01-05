@@ -154,7 +154,7 @@ sequenceDiagram
 
 ### Data Flow and Component Interaction
 
-1. **Input Validation** ([main.go](go/main.go#L13-L32) / [main.py](python/main.py#L23-L37))
+1. **Input Validation** ([main.go](go/main.go#L13-L32) / [main.py](python/main.py#L25-L39))
    - Validates city name using Unicode-aware regex
    - Rejects empty strings, excessive length (>100 chars), or invalid characters
    - Joins multi-word city names from command-line arguments
