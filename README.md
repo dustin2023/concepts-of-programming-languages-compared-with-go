@@ -29,7 +29,7 @@ python3 -m venv python/venv
 source python/venv/bin/activate
 pip install -r python/requirements.txt
 ```
-
+If you want all 5 sources to work, create a `.env` with API keys before running.
 Then use the helper script (with the venv activated for Python):
 
 ```bash
@@ -44,13 +44,11 @@ Then use the helper script (with the venv activated for Python):
 
 ```
 
-This script automatically builds the Go binary if needed. For Python, activate your virtual environment first (see Setup) so the script picks up the correct interpreter and installed dependencies. If you want all 5 sources to work, create a `.env` with API keys before running.
-
 
 ## Setup
 
 ### Prerequisites
-- Go 1.23+ ([download](https://go.dev/doc/install))
+- Go 1.21+ ([download](https://go.dev/doc/install))
 - Python 3.13+ ([download](https://www.python.org/downloads/))
 - API keys (optional, see below)
 
