@@ -221,6 +221,15 @@ sequenceDiagram
    - Displays aggregated statistics
    - Includes weather emojis and formatting
 
+---
+
+### Example Output: Go vs. Python
+
+Below is a real output comparison for the same city (New York) with 4 sources, using both implementations side by side:
+
+![Sample output: Go (top) and Python (bottom) produce nearly identical results and timings when fetching weather data concurrently.](docs/sample-output-weather-comparison.png)
+
+
 ### Concurrency Model Comparison
 
 The implementations use fundamentally different concurrency approaches:
