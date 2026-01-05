@@ -225,24 +225,6 @@ sequenceDiagram
 
 The implementations use fundamentally different concurrency approaches:
 
-**Go: CSP-inspired Goroutines and Channels**
-
-- **Model**: Communicating Sequential Processes (CSP-inspired)
-- **Execution**: Goroutines are lightweight threads managed by the Go runtime scheduler
-- **Parallelism**: True parallelism - goroutines can run simultaneously on multiple CPU cores (M:N threading)
-- **Communication**: Typed channels for safe message passing between goroutines
-- **Scheduling**: Preemptive - the Go scheduler can pause/resume goroutines automatically
-- **Synchronization**: Blocking channel operations (`ch <- data`, `<-ch`)
-
-**Python: asyncio Event Loop**
-
-- **Model**: Single-threaded event loop with cooperative multitasking
-- **Execution**: Coroutines scheduled by the event loop on a single thread
-- **Parallelism**: Concurrency without parallelism - tasks interleave but don't run simultaneously (GIL limitation)
-- **Communication**: Shared state, futures/promises, no built-in message passing
-- **Scheduling**: Cooperative - coroutines must explicitly `await` to yield control
-- **Synchronization**: `asyncio.gather()`, locks, events
-
 **Architectural Comparison:**
 
 | Aspect | Go Implementation | Python Implementation |
@@ -296,7 +278,7 @@ go build -o weather-aggregator
 ```bash
 cd python
 python3 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
 ./main.py --city Berlin
 ```
@@ -322,7 +304,6 @@ Both implementations have test suites covering validation, aggregation, and fetc
 ```bash
 cd go
 go test -v          # Run all tests
-go test -cover      # With coverage report
 ```
 
 **Python (15 test functions):**
@@ -330,17 +311,16 @@ go test -cover      # With coverage report
 cd python
 source venv/bin/activate
 python -m pytest test_weather.py -v                    # Run all tests  
-python -m pytest --cov=weather --cov-report=html      # With coverage
 ```
 
-**Note on test coverage:** The test suite is deliberately focused on core logic (input validation, aggregation, weather data fetching, and orchestration) rather than exhaustively covering every API source. This approach was chosen to keep the implementation as close as possible to the recommended project scope. The tests use mocks to verify concurrency behavior and include integration tests for the free API source to ensure real-world functionality.
+**Note on test coverage:** The test suite is deliberately focused on core logic rather than exhaustively covering every API source. This approach was chosen to keep the implementation as close as possible to the recommended project scope. The tests use mocks to verify concurrency behavior and include integration tests for the free API source to ensure real-world functionality.
 
 ## Implementation Challenges
 
 Building this project involved several non-trivial problems:
 
 ### 1. API Rate Limits and Reliability
-Free-tier APIs have strict limits and varying reliability. Some sources (Meteosource) frequently timeout or return 429 errors. The solution was graceful degradation: show partial results instead of failing completely. Also had to add proper timeout handling (10s per request) to prevent one slow API from blocking everything.
+Many free weather APIs have very low limits or are unreliable. For example, some (like Meteosource) often timed out or returned too many errors, and others (like weatherstack) had to be replaced because their free tier was not enough for testing. To handle this, the program just shows partial results if some sources fail, instead of stopping completely. I also added a timeout (10 seconds per request) so one slow API can't block everything.
 
 ### 2. Coordinating Parallel Requests
 Different APIs have different requirements - some take city names, others need lat/lon coordinates. Had to implement coordinate caching to avoid geocoding the city multiple times. Go's channels made this straightforward, while Python's asyncio required careful async context management.
@@ -366,7 +346,7 @@ Some APIs need lat/lon instead of city names. Geocoding 5 times for the same cit
 Each API uses different formats (WMO codes 0-99, Tomorrow.io "1000"/"1001", plain strings). Needed a way to map everything to unified categories without hardcoding. JSON file makes it easy to update mappings without recompiling - central for both languages.
 
 **Why is the code above the ~500 LOC guideline?**  
-I intentionally added more APIs (five sources in both languages) to make the comparison meaningful. Each adapter, plus shared weather-code mapping and validation, adds boilerplate. **Acknowledgement:** the current combined size exceeds the ~1,000 LOC guideline; a planned reduction to 3 sources (Open-Meteo + two key-based) would bring the project back within scope without losing the concurrency comparison value.
+I intentionally added more APIs (five sources in both languages) to make the comparison meaningful. Each adapter, plus shared weather-code mapping and validation, adds boilerplate. **Acknowledgement:** the current combined size exceeds the ~1,000 LOC guideline. Five sources provide a realistic scenario for demonstrating concurrency patterns and error handling.
 
 **Go vs Python trade-offs observed:**
 - Go: Simpler concurrency (goroutines just work), faster, single binary. But more verbose, less flexible types.
@@ -388,6 +368,10 @@ Single-run measurements from the repository root using `./weather-service`, with
 - Both implementations handle I/O-bound work efficiently: Go with goroutines, Python with asyncio.
 - Concurrency provides significant speedup in both languages (1.98×–2.25×), demonstrating that the concurrency model matters more than raw language speed for network requests.
 - Results are network-dependent; rerun the commands above to reproduce on your machine. Measurements taken on macOS (M1 Pro), stable broadband, `.env` with API keys present.
+
+## Conclusion: Python or Go?
+
+For this weather aggregation project, both work equally well (~2× concurrency speedup). Go's goroutines + channels are conceptually elegant and felt more natural for this pattern. Python's asyncio was easier for me to implement due to existing experience, though it required more careful thinking about async context management. For production at scale, Go wins on simplicity and performance; for learning and experimentation, Python's flexibility and lower barrier to entry are advantages.
 
 ## References
 
