@@ -165,14 +165,14 @@ sequenceDiagram
    - Conditionally adds API-key sources if environment variables are present
    - Filters excluded sources based on CLI flags
 
-3. **Geocoding** ([weather.go](go/weather.go#L123-L140) / [weather.py](python/weather.py#L123-L145))
+3. **Geocoding** ([weather.go](go/weather.go#L121-L143) / [weather.py](python/weather.py#L127-L152))
    - Converts city name to latitude/longitude coordinates
    - Uses Open-Meteo Geocoding API (free, no key required)
    - Caches coordinates to avoid redundant API calls for sources needing coords
 
 4. **Concurrent/Sequential Fetching**
    
-   **Go Implementation Concurrent** ([weather.go](go/weather.go)):
+   **Go Implementation Concurrent** ([weather.go](go/weather.go#L370-L388)):
    ```go
    // Buffered channel with capacity = number of sources
    ch := make(chan WeatherData, len(sources))
@@ -190,7 +190,7 @@ sequenceDiagram
    }
    ```
    
-   **Python Implementation Concurrent** ([weather.py](python/weather.py)):
+   **Python Implementation Concurrent** ([weather.py](python/weather.py#L397-L413)):
    ```python
    # Create async tasks for all sources
    tasks = [
@@ -209,13 +209,13 @@ sequenceDiagram
    - Maps provider-specific weather codes to normalized conditions
    - Records request duration for performance analysis
 
-6. **Aggregation** ([weather.go](go/weather.go) / [weather.py](python/weather.py))
+6. **Aggregation** ([weather.go](go/weather.go#L405-L446) / [weather.py](python/weather.py#L435-L471))
    - Filters out errors (responses with Error field set)
    - Calculates average temperature from valid responses
    - Calculates average humidity (excludes sources without humidity data)
    - Determines consensus condition using majority voting
 
-7. **Display** ([main.go](go/main.go) / [main.py](python/main.py))
+7. **Display** ([main.go](go/main.go#L106-L135) / [main.py](python/main.py#L83-L107))
    - Prints per-source results with timing
    - Shows error messages for failed sources
    - Displays aggregated statistics
