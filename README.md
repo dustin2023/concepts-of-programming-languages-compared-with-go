@@ -1,11 +1,11 @@
-# Weather Data Aggregator: Comparing Go and Python Concurrency
+# Weather Data Aggregator: Comparing Go Parallel Programming with Python
 
 **Semester Project – Concepts of Programming Languages**  
 **Technical University of Applied Science Rosenheim – Winter 2025/2026**
 
 ## Overview
 
-This project compares concurrent programming in Go and Python by implementing the same CLI application in both languages. The program fetches weather data from multiple APIs in parallel, aggregates the results, and demonstrates how different concurrency models handle I/O-bound operations.
+This project compares Go's parallel programming capabilities with Python's concurrency approaches by implementing the same CLI application in both languages. The program fetches weather data from multiple APIs concurrently, aggregates the results, and demonstrates how Go's goroutines (with true parallelism) compare to Python's asyncio (concurrency) for I/O-bound operations.
 
 **What it does:**
 - Takes a city name as input
@@ -14,10 +14,10 @@ This project compares concurrent programming in Go and Python by implementing th
 - Handles API failures gracefully (shows partial results if some sources fail)
 
 **Why these languages:**
-- **Go**: Statically typed, compiled. Uses goroutines and channels (CSP model)
-- **Python**: Dynamically typed, interpreted. Uses asyncio event loop with async/await
+- **Go**: Statically typed, compiled. Uses goroutines and channels (CSP model) with true parallelism capability
+- **Python**: Dynamically typed, interpreted. Uses asyncio event loop with async/await (concurrency)
 
-The goal was to see how each language handles the same real-world problem: making multiple HTTP requests efficiently while dealing with timeouts, errors, and varying response times.
+The goal was to compare Go's parallel programming model with Python's concurrency approach for the same real-world problem: making multiple HTTP requests efficiently while dealing with timeouts, errors, and varying response times. This reveals a key insight—Go enables true parallelism through goroutines on multiple CPU cores, while Python's asyncio provides concurrency on a single thread, both effective for I/O-bound tasks but fundamentally different in architecture.
 
 ## Quick Start
 
@@ -256,6 +256,10 @@ The implementations use fundamentally different concurrency approaches:
 | **Syntax** | `go func()` to launch, `<-chan` to receive | `async def` to define, `await` to yield |
 | **CPU Utilization** | Can use multiple cores (for CPU-bound work) | Single core only (GIL prevents parallel CPU work) |
 | **Best For** | CPU-bound tasks, high concurrency, low-latency services | I/O-bound tasks, network operations, simple async code |
+
+**Why Concurrency, Not Full Parallelism:**
+
+This project targets I/O-bound operations (HTTP requests), where the bottleneck is network latency, not CPU computation. Go's goroutines provide true parallelism capability but gain their advantage from concurrency—overlapping I/O wait times. Python's `asyncio` achieves the same through single-threaded cooperative multitasking. Using Python's `multiprocessing` would add overhead without performance benefit for network-bound tasks. Key insight: concurrency (overlapping execution) matters for I/O-bound work; parallelism (multi-core execution) benefits CPU-bound tasks.
 
 ## Running the Program
 
