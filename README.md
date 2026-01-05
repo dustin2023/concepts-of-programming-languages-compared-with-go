@@ -225,7 +225,7 @@ sequenceDiagram
 
 ### Example Output: Go vs. Python
 
-Below is a real output comparison for the same city (New York) with 4 sources, using both implementations side by side:
+Below is a real output comparison for the same city (New York) with 4 sources, using both implementations:
 
 ![Sample output: Go (top) and Python (bottom) produce nearly identical results and timings when fetching weather data concurrently.](docs/sample-output-weather-comparison.png)
 
